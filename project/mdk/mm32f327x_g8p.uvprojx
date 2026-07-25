@@ -469,6 +469,36 @@
               <FileType>5</FileType>
               <FilePath>..\code\Encoder.h</FilePath>
             </File>
+            <File>
+              <FileName>MPU6050.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\MPU6050.c</FilePath>
+            </File>
+            <File>
+              <FileName>MPU6050.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\MPU6050.h</FilePath>
+            </File>
+            <File>
+              <FileName>Kfilter.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Kfilter.c</FilePath>
+            </File>
+            <File>
+              <FileName>Kfilter.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Kfilter.h</FilePath>
+            </File>
+            <File>
+              <FileName>Promopt.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Promopt.c</FilePath>
+            </File>
+            <File>
+              <FileName>Promopt.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Promopt.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

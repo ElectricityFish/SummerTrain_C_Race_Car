@@ -4,13 +4,16 @@
 #include "Motor.h"
 #include "Image.h"
 #include "Encoder.h"
+#include "MPU6050.h"
+#include "Kfilter.h"
+#include "Promopt.h"
 
 int main(void)
 {
 	clock_init(SYSTEM_CLOCK_120M);					//初始化芯片时钟，工作频率120MHz
 	debug_init();									//初始化默认Debug串口
 	
-	pit_ms_init(TIM7_PIT, 5);						//TIM3改作编码器1，菜单扫描改用空闲TIM7
+	pit_ms_init(TIM7_PIT, 5);						
 	pit_ms_init(TIM6_PIT, 1);
 	
 	
@@ -24,6 +27,15 @@ int main(void)
 	servomotor_init();
 	motor_init();
 	encoder_init();
+	promopt_init();										//蜂鸣器D7初始化为输出
+	while(mpu6050_module_init())
+	{
+		ips200_set_color(RGB565_RED, RGB565_BLACK);
+		ips200_clear();
+		ips200_show_string(0, 0, "MPU6050 INIT ERR");
+		system_delay_ms(500);
+	}
+	kfilter_init();										//初始化Pitch、Roll两组卡尔曼滤波器
 	while(image_init())
 	{
 		ips200_set_color(RGB565_RED, RGB565_BLACK);
@@ -55,8 +67,16 @@ void TIM7_5ms_PIT(void)
 void TIM6_1ms_PIT(void)
 {
 	static uint8_t count=0;
+	static uint8_t count1=0;
+	count1++;
 	count++;
 	image_fps_1ms_task();							//每1ms计时，按1秒窗口统计实际采集帧率
+	promopt_tick();
+	if(count1>=10)
+	{
+		Get_Angle();								//KFILTER_SAMPLE_DT对应10ms
+		count1=0;
+	}
 	if(count>=20)
 	{
 		encoder1=encoder_1_get_pulse();
@@ -64,5 +84,3 @@ void TIM6_1ms_PIT(void)
 		count=0;
 	}
 }
-
-

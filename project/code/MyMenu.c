@@ -5,6 +5,7 @@
 #include "zf_device_key.h"
 #include "Image.h"
 #include "Encoder.h"
+#include "Kfilter.h"
 
 #define MENU_FONT_WIDTH             (8)
 #define MENU_FONT_HEIGHT            (16)
@@ -23,6 +24,9 @@ static Menu_Item *check_folder = NULL;
 static uint16 image_fps_menu_value = 0;
 static int16 check_encoder1_menu_value = 0;
 static int16 check_encoder2_menu_value = 0;
+static float check_yaw_menu_value = 0.0f;
+static float check_pitch_menu_value = 0.0f;
+static float check_roll_menu_value = 0.0f;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
 static bool menu_refresh_required = true;
@@ -98,6 +102,9 @@ static bool menu_update_check_values(void)
 {
 	int16 encoder1_value = encoder1;
 	int16 encoder2_value = encoder2;
+	float yaw_value = yaw;
+	float pitch_value = pitch;
+	float roll_value = roll;
 	bool changed = false;
 
 	if(check_encoder1_menu_value != encoder1_value)
@@ -108,6 +115,21 @@ static bool menu_update_check_values(void)
 	if(check_encoder2_menu_value != encoder2_value)
 	{
 		check_encoder2_menu_value = encoder2_value;
+		changed = true;
+	}
+	if(check_yaw_menu_value != yaw_value)
+	{
+		check_yaw_menu_value = yaw_value;
+		changed = true;
+	}
+	if(check_pitch_menu_value != pitch_value)
+	{
+		check_pitch_menu_value = pitch_value;
+		changed = true;
+	}
+	if(check_roll_menu_value != roll_value)
+	{
+		check_roll_menu_value = roll_value;
 		changed = true;
 	}
 	return changed;
@@ -182,9 +204,24 @@ void menu_init(void)
 	}
 	image_preview_item = create_menu_folder_dynamic(image_folder, "Preview");
 
-	//Check目录显示TIM6中断每20ms采集到的两路编码器增量脉冲。
+	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。
 	check_folder = create_menu_folder_dynamic(&head, "Check");
 	item = create_menu_number_dynamic(check_folder, "Encoder1", &check_encoder1_menu_value, int16_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
+	item = create_menu_number_dynamic(check_folder, "Yaw", &check_yaw_menu_value, float_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
+	item = create_menu_number_dynamic(check_folder, "Pitch", &check_pitch_menu_value, float_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
+	item = create_menu_number_dynamic(check_folder, "Roll", &check_roll_menu_value, float_Box);
 	if(item != NULL)
 	{
 		item->editable = false;
@@ -566,7 +603,7 @@ void menu_show(void)
 	//没有操作时不刷屏，避免占用智能车主循环时间
 	if(!menu_refresh_required)
 	{
-		//Check页面的名称和光标不变时，仅覆盖两个数字，避免20ms一次全屏清除。
+		//Check页面的名称和光标不变时，仅覆盖数值，避免周期刷新时全屏清除。
 		if(menu_is_check_page() && check_value_changed)
 		{
 			ips200_set_font(IPS200_8X16_FONT);

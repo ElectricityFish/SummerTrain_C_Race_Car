@@ -37,7 +37,7 @@ int16 encoder_1_get_pulse(void)
 //读取编码器2在两次调用之间产生的脉冲数，读取后立即清零，适合定时速度计算。
 int16 encoder_2_get_pulse(void)
 {
-	int16 pulse = -encoder_get_count(ENCODER_2_TIMER);
+	int16 pulse = -encoder_get_count(ENCODER_2_TIMER);	//这里有个负号，使轮胎向前转时脉冲为正
 
 	encoder_clear_count(ENCODER_2_TIMER);
 	return pulse;
