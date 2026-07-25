@@ -27,6 +27,7 @@ typedef struct  Menu_Item{
 	uint8_t no;  //记录当前是父节点的第几个子节点
 
 	bool select;	//记录是否被选中
+	bool editable;	//数值项是否允许通过菜单按键修改
 	
 	struct  Menu_Item *father;			//指向父节点（上一级菜单）
 	struct  Menu_Item *first_son;		//指向第一个子节点（下一级菜单）

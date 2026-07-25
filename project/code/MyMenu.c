@@ -3,6 +3,8 @@
 #include "zf_common_font.h"
 #include "zf_device_ips200.h"
 #include "zf_device_key.h"
+#include "Image.h"
+#include "Encoder.h"
 
 #define MENU_FONT_WIDTH             (8)
 #define MENU_FONT_HEIGHT            (16)
@@ -15,9 +17,12 @@
 Menu_Item head;		//创建根节点
 Menu_Item *key;		//指向当前光标所在的菜单项
 
-uint8_t test1 = 10;
-uint8_t test2 = 50;
-float test_float = 1.50f;
+static Menu_Item *image_preview_item = NULL;
+static Menu_Item *image_fps_item = NULL;
+static Menu_Item *check_folder = NULL;
+static uint16 image_fps_menu_value = 0;
+static int16 check_encoder1_menu_value = 0;
+static int16 check_encoder2_menu_value = 0;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
 static bool menu_refresh_required = true;
@@ -58,6 +63,56 @@ static void menu_show_text(uint16 x, uint16 y, const char *text, uint8_t max_cha
 	}
 }
 
+//逐飞浮点显示函数会直接截断小数，这里先加上半个末位单位实现四舍五入
+static float menu_round_float_for_display(float value, uint8_t point_num)
+{
+	float half_unit = 0.5f;
+
+	while(point_num > 0)
+	{
+		half_unit /= 10.0f;
+		point_num--;
+	}
+
+	if(value >= 0.0f)
+	{
+		return value + half_unit;
+	}
+	return value - half_unit;
+}
+
+//判断当前是否已进入图像预览页面
+static bool menu_is_image_preview(void)
+{
+	return (key != NULL && key == image_preview_item);
+}
+
+//判断当前显示的是否为Check目录。该页需要原地刷新编码器数值。
+static bool menu_is_check_page(void)
+{
+	return (key != NULL && key->father == check_folder);
+}
+
+//把中断中更新的脉冲结果同步到菜单绑定变量，返回值表示本次是否有变化。
+static bool menu_update_check_values(void)
+{
+	int16 encoder1_value = encoder1;
+	int16 encoder2_value = encoder2;
+	bool changed = false;
+
+	if(check_encoder1_menu_value != encoder1_value)
+	{
+		check_encoder1_menu_value = encoder1_value;
+		changed = true;
+	}
+	if(check_encoder2_menu_value != encoder2_value)
+	{
+		check_encoder2_menu_value = encoder2_value;
+		changed = true;
+	}
+	return changed;
+}
+
 //光标移动后，让当前项始终处于可见区域
 static void menu_update_view(void)
 {
@@ -96,8 +151,8 @@ static Menu_Item *menu_get_last_brother(Menu_Item *item)
 //通过初始化函数在任意节点下添加任意东西
 void menu_init(void)
 {
-	Menu_Item *folder1;
-	Menu_Item *folder4;
+	Menu_Item *image_folder;
+	Menu_Item *item;
 
 	menu_pool_reset();
 
@@ -112,18 +167,33 @@ void menu_init(void)
 	head.sons = 0;
 	head.no = 0;
 	head.select = false;
+	head.editable = false;
 	head.min_value = 0.0f;
 	head.max_value = 0.0f;
 	head.step = 0.0f;
 
-	folder1 = create_menu_folder_dynamic(&head, "Folder1");
-	create_menu_folder_dynamic(&head, "Folder2");
-	create_menu_folder_dynamic(&head, "Folder3");
-	folder4 = create_menu_folder_dynamic(folder1, "Folder4");
+	//菜单仅保留图像目录。FPS为只读采集帧率，Preview作为图像预览入口。
+	image_folder = create_menu_folder_dynamic(&head, "Image");
+	image_fps_menu_value = image_get_capture_fps();
+	image_fps_item = create_menu_number_dynamic(image_folder, "FPS", &image_fps_menu_value, uint16_Box);
+	if(image_fps_item != NULL)
+	{
+		image_fps_item->editable = false;		//帧率是采集统计结果，禁止在菜单中修改
+	}
+	image_preview_item = create_menu_folder_dynamic(image_folder, "Preview");
 
-	create_menu_number_range_dynamic(folder1, "test1", &test1, uint8_Box, 0.0f, 100.0f, 1.0f);
-	create_menu_number_range_dynamic(folder1, "test_float", &test_float, float_Box, 0.0f, 10.0f, 0.01f);
-	create_menu_number_range_dynamic(folder4, "test2", &test2, uint8_Box, 0.0f, 255.0f, 1.0f);
+	//Check目录显示TIM6中断每20ms采集到的两路编码器增量脉冲。
+	check_folder = create_menu_folder_dynamic(&head, "Check");
+	item = create_menu_number_dynamic(check_folder, "Encoder1", &check_encoder1_menu_value, int16_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
+	item = create_menu_number_dynamic(check_folder, "Encoder2", &check_encoder2_menu_value, int16_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
 
 	key = head.first_son;
 	menu_view_first = 0;
@@ -217,7 +287,7 @@ void key_enter(void)
 			menu_refresh_required = true;
 		}
 	}
-	else
+	else if(key->editable)
 	{
 		key->select = !key->select;
 		menu_refresh_required = true;
@@ -251,7 +321,7 @@ void key_quit(void)
 
 void key_select(void)
 {
-	if(key != NULL && key->kind != MENU_Folder)
+	if(key != NULL && key->kind != MENU_Folder && key->editable)
 	{
 		key->select = !key->select;
 		menu_refresh_required = true;
@@ -264,7 +334,7 @@ static bool menu_change_number(int8_t direction)
 	float old_value;
 	float new_value;
 
-	if(key == NULL || key->data == NULL || key->kind == MENU_Folder)
+	if(key == NULL || key->data == NULL || key->kind == MENU_Folder || !key->editable)
 	{
 		return false;
 	}
@@ -415,7 +485,12 @@ static void show_number(void)
 					ips200_show_int(MENU_VALUE_X, y, *(int16_t *)item->data, 5);
 					break;
 				case float_Box:
-					ips200_show_float(MENU_VALUE_X, y, *(float *)item->data, 5, 2);
+					ips200_show_float(
+						MENU_VALUE_X,
+						y,
+						menu_round_float_for_display(*(float *)item->data, 2),
+						5,
+						2);
 					break;
 				default:
 					break;
@@ -427,16 +502,76 @@ static void show_number(void)
 	ips200_set_color(RGB565_WHITE, RGB565_BLACK);
 }
 
+//在Image/Preview页面显示最新一帧灰度图像，KEY4可返回上一级菜单
+static void menu_show_image_preview(void)
+{
+	bool new_frame = image_take_new_frame();
+
+	if(menu_refresh_required)
+	{
+		menu_refresh_required = false;
+		ips200_set_font(IPS200_8X16_FONT);
+		ips200_set_color(RGB565_WHITE, RGB565_BLACK);
+		ips200_clear();
+		ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
+		menu_show_text(0, 160, "IMAGE PREVIEW", 30);
+		ips200_set_color(RGB565_WHITE, RGB565_BLACK);
+		menu_show_text(0, 176, "KEY4: BACK", 30);
+	}
+
+	if(new_frame)
+	{
+		//188x120图像等比例放大到240x153，适配竖屏IPS200的宽度。
+		ips200_show_gray_image(
+			0,
+			0,
+			image_get_buffer(),
+			MT9V03X_W,
+			MT9V03X_H,
+			240,
+			153,
+			0);
+	}
+}
+
 void menu_show(void)
 {
 	Menu_Item *item;
 	const char *folder_name;
 	uint8_t row;
 	uint16 y;
+	uint16 latest_fps;
+	bool check_value_changed;
+
+	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
+	latest_fps = image_get_capture_fps();
+	if(latest_fps != image_fps_menu_value)
+	{
+		image_fps_menu_value = latest_fps;
+		if(key != NULL && image_fps_item != NULL && key->father == image_fps_item->father)
+		{
+			menu_refresh_required = true;
+		}
+	}
+
+	check_value_changed = menu_update_check_values();
+
+	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
+	if(menu_is_image_preview())
+	{
+		menu_show_image_preview();
+		return;
+	}
 
 	//没有操作时不刷屏，避免占用智能车主循环时间
 	if(!menu_refresh_required)
 	{
+		//Check页面的名称和光标不变时，仅覆盖两个数字，避免20ms一次全屏清除。
+		if(menu_is_check_page() && check_value_changed)
+		{
+			ips200_set_font(IPS200_8X16_FONT);
+			show_number();
+		}
 		return;
 	}
 	menu_refresh_required = false;

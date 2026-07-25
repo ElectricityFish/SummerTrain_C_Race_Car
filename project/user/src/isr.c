@@ -34,6 +34,7 @@
 ********************************************************************************************************************/
 
 #include "isr.h"
+#include "Image.h"
 
 //-------------------------------------------------------------------------------------------------------------------
 // 函数简介     TIM1 的定时器更新中断服务函数 启动 .s 文件定义 不允许修改函数名称
@@ -42,8 +43,7 @@
 void TIM1_UP_IRQHandler (void)
 {
     // 此处编写用户代码
-	extern void TIM1_5ms_PIT(void);
-	TIM1_5ms_PIT();
+	
     // 此处编写用户代码
     TIM1->SR &= ~TIM1->SR;                                                      // 清空中断状态
 }
@@ -55,8 +55,7 @@ void TIM1_UP_IRQHandler (void)
 void TIM2_IRQHandler (void)
 {
     // 此处编写用户代码
-	extern void TIM2_1ms_PIT(void);
-	TIM2_1ms_PIT();
+	
     // 此处编写用户代码
     TIM2->SR &= ~TIM2->SR;                                                      // 清空中断状态
 }
@@ -68,8 +67,7 @@ void TIM2_IRQHandler (void)
 void TIM3_IRQHandler (void)
 {
     // 此处编写用户代码
-
-    // 此处编写用户代码
+	// 此处编写用户代码
     TIM3->SR &= ~TIM3->SR;                                                      // 清空中断状态
 }
 
@@ -104,7 +102,8 @@ void TIM5_IRQHandler (void)
 void TIM6_IRQHandler (void)
 {
     // 此处编写用户代码
-
+	extern void TIM6_1ms_PIT(void);
+	TIM6_1ms_PIT();
     // 此处编写用户代码
     TIM6->SR &= ~TIM6->SR;                                                      // 清空中断状态
 }
@@ -116,7 +115,8 @@ void TIM6_IRQHandler (void)
 void TIM7_IRQHandler (void)
 {
     // 此处编写用户代码
-
+	extern void TIM7_5ms_PIT(void);
+	TIM7_5ms_PIT();
     // 此处编写用户代码
     TIM7->SR &= ~TIM7->SR;                                                      // 清空中断状态
 }
@@ -129,7 +129,7 @@ void TIM8_UP_IRQHandler (void)
 {
     tsl1401_collect_pit_handler();
     // 此处编写用户代码
-
+	
     // 此处编写用户代码
     TIM8->SR &= ~TIM8->SR;                                                      // 清空中断状态
 }
@@ -546,6 +546,7 @@ void DMA1_Channel4_IRQHandler (void)
     if(DMA1->ISR & (0x00000001 << (3 * 4)))                                     // 判断触发通道
     {
         camera_dma_handler();
+		image_dma_finish_handler();                                                 // 一帧图像DMA搬运完成，计入采集帧率
         // 此处编写用户代码
 
         // 此处编写用户代码

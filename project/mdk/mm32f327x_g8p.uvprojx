@@ -439,6 +439,36 @@
               <FileType>5</FileType>
               <FilePath>..\code\ServoMotor.h</FilePath>
             </File>
+            <File>
+              <FileName>Motor.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Motor.c</FilePath>
+            </File>
+            <File>
+              <FileName>Motor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Motor.h</FilePath>
+            </File>
+            <File>
+              <FileName>Image.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Image.c</FilePath>
+            </File>
+            <File>
+              <FileName>Image.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Image.h</FilePath>
+            </File>
+            <File>
+              <FileName>Encoder.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Encoder.c</FilePath>
+            </File>
+            <File>
+              <FileName>Encoder.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Encoder.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

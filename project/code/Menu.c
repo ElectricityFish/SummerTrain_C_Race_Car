@@ -178,6 +178,7 @@ static bool Creat_Menu_Item(
 	}
 	
 	me->select = false;
+	me->editable = (kind != MENU_Folder);
 	me->sons=0;
 	me->name=name;
 	me->father=father;
