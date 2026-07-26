@@ -23,7 +23,10 @@ Menu_Item *key;		//指向当前光标所在的菜单项
 static Menu_Item *image_preview_item = NULL;
 static Menu_Item *image_fps_item = NULL;
 static Menu_Item *check_folder = NULL;
+static Menu_Item *cargo_folder = NULL;
 static uint16 image_fps_menu_value = 0;
+static uint8 cargo_state_menu_value = COMMON_STATE_IDLE;
+static uint8 cargo_fault_menu_value = CAR_PROTECTION_REASON_NONE;
 static int16 check_encoder1_menu_value = 0;
 static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
@@ -97,6 +100,31 @@ static bool menu_is_image_preview(void)
 static bool menu_is_check_page(void)
 {
 	return (key != NULL && key->father == check_folder);
+}
+
+// 判断当前显示的是否为 CarGo 目录。该页需要原地刷新状态和故障原因。
+static bool menu_is_cargo_page(void)
+{
+	return (key != NULL && key->father == cargo_folder);
+}
+
+static bool menu_update_cargo_values(void)
+{
+	uint8 state_value = (uint8)common_state;
+	uint8 fault_value = car_protection_reason;
+	bool changed = false;
+
+	if(cargo_state_menu_value != state_value)
+	{
+		cargo_state_menu_value = state_value;
+		changed = true;
+	}
+	if(cargo_fault_menu_value != fault_value)
+	{
+		cargo_fault_menu_value = fault_value;
+		changed = true;
+	}
+	return changed;
 }
 
 //把中断中更新的脉冲结果同步到菜单绑定变量，返回值表示本次是否有变化。
@@ -198,6 +226,23 @@ void menu_init(void)
 	head.min_value = 0.0f;
 	head.max_value = 0.0f;
 	head.step = 0.0f;
+
+	// CarGo：RunCmd=1 请求发车，RunCmd=0 停车；Protect 状态需先置 0 确认后才可重新发车。
+	cargo_folder = create_menu_folder_dynamic(&head, "CarGo");
+	if(cargo_folder != NULL)
+	{
+		create_menu_number_range_dynamic(cargo_folder, "RunCmd", (void *)&car_go_command, uint8_Box, 0.0f, 1.0f, 1.0f);
+		item = create_menu_number_dynamic(cargo_folder, "State", &cargo_state_menu_value, uint8_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(cargo_folder, "Fault", &cargo_fault_menu_value, uint8_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+	}
 
 	//图像目录包含采集帧率、处理结果预览和基础巡线参数。
 	image_folder = create_menu_folder_dynamic(&head, "Image");
@@ -597,6 +642,7 @@ void menu_show(void)
 	uint16 y;
 	uint16 latest_fps;
 	bool check_value_changed;
+	bool cargo_value_changed;
 
 	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
 	latest_fps = image_get_capture_fps();
@@ -610,6 +656,7 @@ void menu_show(void)
 	}
 
 	check_value_changed = menu_update_check_values();
+	cargo_value_changed = menu_update_cargo_values();
 
 	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
 	if(menu_is_image_preview())
@@ -622,7 +669,8 @@ void menu_show(void)
 	if(!menu_refresh_required)
 	{
 		//Check页面的名称和光标不变时，仅覆盖数值，避免周期刷新时全屏清除。
-		if(menu_is_check_page() && check_value_changed)
+		if((menu_is_check_page() && check_value_changed)
+			|| (menu_is_cargo_page() && cargo_value_changed))
 		{
 			ips200_set_font(IPS200_8X16_FONT);
 			show_number();

@@ -3,6 +3,30 @@
 
 #include "PID.h"
 
+// 小车全局状态。只有状态机接口可以改变状态，避免菜单或业务逻辑绕过保护。
+typedef enum
+{
+	COMMON_STATE_IDLE = 0,
+	COMMON_STATE_RUNNING,
+	COMMON_STATE_PROTECT
+} Common_State;
+
+// 保护原因可以组合并锁存，供菜单显示和故障定位使用。
+#define CAR_PROTECTION_REASON_NONE       (0U)
+#define CAR_PROTECTION_REASON_ATTITUDE   (1U << 0)
+#define CAR_PROTECTION_REASON_IMAGE      (1U << 1)
+
+#define CAR_PROTECTION_ANGLE_LIMIT_DEG       (15.0f)
+#define CAR_PROTECTION_IMAGE_GRAY_RANGE_MAX  (5U)
+#define CAR_PROTECTION_IMAGE_SAMPLE_STEP     (4U)
+#define CAR_PROTECTION_IMAGE_GRAY_FRAME_COUNT (3U)
+
+// common_state 由主循环和定时中断共同访问，必须使用 volatile。
+extern volatile Common_State common_state;
+extern volatile uint8 car_go_command;             // CarGo/RunCmd：0 停车，1 请求发车
+extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位图
+
+
 // 图像列坐标的目标偏置：正值表示目标中线向图像右侧移动。
 #define SERVO_CONTROL_IMAGE_CENTER_OFFSET     (0.0f)
 
@@ -13,10 +37,17 @@
 #define SERVO_CONTROL_DIRECTION                (1.0f)
 
 extern PID_t servo_pid;
-extern bool servo_control_enabled;
+extern volatile bool servo_control_enabled;
 
 // 初始化视觉舵机 PID；应在摄像头、图像处理和舵机底层初始化完成后调用。
 void control_init(void);
+
+// 在主循环调用，处理菜单的发车/停车请求。Protect 只能在故障消失且 RunCmd=0 时退回 IDLE。
+void car_state_command_task(void);
+
+// 分别在姿态解算完成和取得一帧完整图像后调用；仅 RUNNING 状态命中条件时进入 Protect。
+void car_protection_check_attitude(void);
+void car_protection_check_image(const uint8 *image, uint16 width, uint16 height);
 
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);

@@ -72,3 +72,9 @@ void servomotor_set_angle(float angle)
 		SERVOMOTOR_PWM_PIN,
 		servomotor_angle_to_duty(calibrated_angle));
 }
+
+// 将 PWM 占空比清零，停止向舵机发送控制脉冲。
+void servomotor_disable(void)
+{
+	pwm_set_duty(SERVOMOTOR_PWM_PIN, 0U);
+}

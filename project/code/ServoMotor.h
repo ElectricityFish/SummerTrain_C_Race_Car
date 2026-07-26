@@ -33,4 +33,7 @@ void servomotor_init(void);
 //62.5度为向右最大，90度为直行，117.5度为向左最大，超出范围会自动限制
 void servomotor_set_angle(float angle);
 
+// 停止输出舵机控制脉冲，使舵机不再保持当前位置。
+void servomotor_disable(void);
+
 #endif

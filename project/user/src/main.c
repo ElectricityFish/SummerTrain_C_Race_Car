@@ -53,14 +53,15 @@ int main(void)
 	
 	
 	
-	motor_set_duty(2000,2000);
 	while(1)
 	{
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
+			car_protection_check_image(image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
 		}
+		car_state_command_task();
 		menu_show();								//仅在内容变化时才真正刷新
 
 	}
@@ -87,6 +88,7 @@ void TIM6_1ms_PIT(void)
 	if(count1>=10)									// 每10ms进行一次姿态解算
 	{
 		Get_Angle();								//KFILTER_SAMPLE_DT对应10ms
+		car_protection_check_attitude();
 		count1=0;
 	}
 	
@@ -107,6 +109,15 @@ void TIM8_1ms_PIT(void)
 	if(count>=10)
 	{
 		count=0;
-		servo_control();
+		if(common_state == COMMON_STATE_RUNNING)
+		{
+			motor_set_duty(2000,2000);
+			servo_control();
+		}
+		else
+		{
+			motor_set_duty(0,0);
+			servomotor_disable();
+		}
 	}
 }
