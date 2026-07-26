@@ -499,6 +499,36 @@
               <FileType>5</FileType>
               <FilePath>..\code\Promopt.h</FilePath>
             </File>
+            <File>
+              <FileName>Image_Process.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Image_Process.c</FilePath>
+            </File>
+            <File>
+              <FileName>Image_Process.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Image_Process.h</FilePath>
+            </File>
+            <File>
+              <FileName>PID.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\PID.c</FilePath>
+            </File>
+            <File>
+              <FileName>PID.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\PID.h</FilePath>
+            </File>
+            <File>
+              <FileName>Control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Control.c</FilePath>
+            </File>
+            <File>
+              <FileName>Control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Control.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

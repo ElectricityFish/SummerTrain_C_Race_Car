@@ -4,6 +4,8 @@
 #include "zf_device_ips200.h"
 #include "zf_device_key.h"
 #include "Image.h"
+#include "Image_Process.h"
+#include "Control.h"
 #include "Encoder.h"
 #include "Kfilter.h"
 
@@ -174,6 +176,9 @@ static Menu_Item *menu_get_last_brother(Menu_Item *item)
 void menu_init(void)
 {
 	Menu_Item *image_folder;
+	Menu_Item *process_folder;
+	Menu_Item *pid_folder;
+	Menu_Item *servo_pid_folder;
 	Menu_Item *item;
 
 	menu_pool_reset();
@@ -194,7 +199,7 @@ void menu_init(void)
 	head.max_value = 0.0f;
 	head.step = 0.0f;
 
-	//菜单仅保留图像目录。FPS为只读采集帧率，Preview作为图像预览入口。
+	//图像目录包含采集帧率、处理结果预览和基础巡线参数。
 	image_folder = create_menu_folder_dynamic(&head, "Image");
 	image_fps_menu_value = image_get_capture_fps();
 	image_fps_item = create_menu_number_dynamic(image_folder, "FPS", &image_fps_menu_value, uint16_Box);
@@ -203,6 +208,32 @@ void menu_init(void)
 		image_fps_item->editable = false;		//帧率是采集统计结果，禁止在菜单中修改
 	}
 	image_preview_item = create_menu_folder_dynamic(image_folder, "Preview");
+	process_folder = create_menu_folder_dynamic(image_folder, "Process");
+	if(process_folder != NULL)
+	{
+		create_menu_number_range_dynamic(process_folder, "RefRows", &image_process_config.reference_rows, uint8_Box, 1.0f, 20.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "RefCols", &image_process_config.reference_cols, uint8_Box, 20.0f, 180.0f, 2.0f);
+		create_menu_number_range_dynamic(process_folder, "Black", &image_process_config.black_threshold, uint8_Box, 0.0f, 200.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "WhiteMin", &image_process_config.white_min_scale, uint8_Box, 1.0f, 10.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "WhiteMax", &image_process_config.white_max_scale, uint8_Box, 10.0f, 20.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Contrast", &image_process_config.contrast_threshold, uint8_Box, 1.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Offset", &image_process_config.contrast_offset, uint8_Box, 1.0f, 8.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Range", &image_process_config.search_range, uint8_Box, 1.0f, 60.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "WeightRow", &image_process_config.weight_center_row, uint8_Box, 0.0f, 119.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+	}
+
+	//视觉转向 PID 参数。三个参数均以 0.01 为步长在线调节。
+	pid_folder = create_menu_folder_dynamic(&head, "PID");
+	servo_pid_folder = create_menu_folder_dynamic(pid_folder, "servo_pid");
+	if(servo_pid_folder != NULL)
+	{
+		create_menu_number_range_dynamic(servo_pid_folder, "kp", &servo_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
+	}
 
 	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。
 	check_folder = create_menu_folder_dynamic(&head, "Check");
@@ -539,10 +570,10 @@ static void show_number(void)
 	ips200_set_color(RGB565_WHITE, RGB565_BLACK);
 }
 
-//在Image/Preview页面显示最新一帧灰度图像，KEY4可返回上一级菜单
+//在Image/Preview页面显示最新一帧处理结果，KEY4可返回上一级菜单
 static void menu_show_image_preview(void)
 {
-	bool new_frame = image_take_new_frame();
+	bool new_result = image_process_take_new_result();
 
 	if(menu_refresh_required)
 	{
@@ -550,24 +581,11 @@ static void menu_show_image_preview(void)
 		ips200_set_font(IPS200_8X16_FONT);
 		ips200_set_color(RGB565_WHITE, RGB565_BLACK);
 		ips200_clear();
-		ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
-		menu_show_text(0, 160, "IMAGE PREVIEW", 30);
-		ips200_set_color(RGB565_WHITE, RGB565_BLACK);
-		menu_show_text(0, 176, "KEY4: BACK", 30);
 	}
 
-	if(new_frame)
+	if(new_result)
 	{
-		//188x120图像等比例放大到240x153，适配竖屏IPS200的宽度。
-		ips200_show_gray_image(
-			0,
-			0,
-			image_get_buffer(),
-			MT9V03X_W,
-			MT9V03X_H,
-			240,
-			153,
-			0);
+		image_process_display();
 	}
 }
 

@@ -3,6 +3,8 @@
 #include "ServoMotor.h"
 #include "Motor.h"
 #include "Image.h"
+#include "Image_Process.h"
+#include "Control.h"
 #include "Encoder.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
@@ -15,6 +17,7 @@ int main(void)
 	
 	pit_ms_init(TIM7_PIT, 5);						
 	pit_ms_init(TIM6_PIT, 1);
+	pit_ms_init(TIM8_PIT, 1);
 	
 	
 	//IPS200方向必须在初始化屏幕之前设置
@@ -43,18 +46,27 @@ int main(void)
 		ips200_show_string(0, 0, "MT9V03X INIT ERR");
 		system_delay_ms(500);
 	}
+	image_process_init();
+	control_init();
 	menu_init();
 	menu_show();									//显示初始菜单
 	
 	
 	
+	motor_set_duty(2000,2000);
 	while(1)
 	{
 		image_update();								//接收DMA采集完成的一帧图像
+		if(image_take_new_frame())
+		{
+			image_process_frame();
+		}
 		menu_show();								//仅在内容变化时才真正刷新
 
 	}
 }
+
+
 
 
 
@@ -72,15 +84,29 @@ void TIM6_1ms_PIT(void)
 	count++;
 	image_fps_1ms_task();							//每1ms计时，按1秒窗口统计实际采集帧率
 	promopt_tick();
-	if(count1>=10)
+	if(count1>=10)									// 每10ms进行一次姿态解算
 	{
 		Get_Angle();								//KFILTER_SAMPLE_DT对应10ms
 		count1=0;
 	}
-	if(count>=20)
+	
+	if(count>=5)									//每5ms进行一次编码器读取
 	{
 		encoder1=encoder_1_get_pulse();
 		encoder2=encoder_2_get_pulse();
 		count=0;
+	}
+}
+
+
+void TIM8_1ms_PIT(void)
+{
+	static uint8_t count=0;
+	count++;
+	
+	if(count>=10)
+	{
+		count=0;
+		servo_control();
 	}
 }

@@ -21,7 +21,7 @@ void motor_init(void);
 
 //设置两路电机占空比，范围为-10000～10000。
 //正负号决定转向，绝对值决定占空比；0为停止，超出范围会自动限幅。
-//motor1为右电机
+//motor1为右电机,motor2为左电机
 void motor_set_duty(int16 motor1_duty, int16 motor2_duty);
 
 #endif
