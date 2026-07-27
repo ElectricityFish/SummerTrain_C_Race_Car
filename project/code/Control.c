@@ -10,7 +10,7 @@ volatile Common_State common_state;
 volatile uint8 car_go_command;
 volatile uint8 car_protection_reason;
 
-PID_t servo_pid;
+Servo_PID_t servo_pid;
 volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
@@ -53,12 +53,12 @@ static void car_state_enter_protect(uint8 reason)
 
 static void servo_control_reset_pid(void)
 {
-    servo_pid.Actual = 0.0f;
-    servo_pid.Actual1 = 0.0f;
-    servo_pid.Out = 0.0f;
-    servo_pid.Error0 = 0.0f;
-    servo_pid.Error1 = 0.0f;
-    servo_pid.ErrorInt = 0.0f;
+	servo_pid.Actual = 0.0f;
+	servo_pid.Out = 0.0f;
+	servo_pid.Error0 = 0.0f;
+	servo_pid.Error1 = 0.0f;
+	servo_pid.ErrorInt = 0.0f;
+	servo_pid.KpNow = servo_pid.KpMin;
 }
 
 void control_init(void)
@@ -72,12 +72,14 @@ void control_init(void)
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.Kp = 2.0f;
+    servo_pid.KpMin = 0.30f;
+    servo_pid.KpMax = 1.05f;
+    servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 1.00f;
-    servo_pid.OutMax = SERVO_CONTROL_OUTPUT_LIMIT;
-    servo_pid.OutMin = -SERVO_CONTROL_OUTPUT_LIMIT;
-    servo_pid.OutOffset = 0.0f;
+    servo_pid.Kd = 0.0f;
+    // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
+    servo_pid.OutMax = 55.0f;
+    servo_pid.OutMin = -55.0f;
 
     servo_control_reset_pid();
     servo_control_enabled = true;
@@ -157,14 +159,14 @@ void servo_control(void)
         return;
     }
 
-    // PID_Update 内部使用 Error = Target - Actual。
+    // servo_pid_up_date 内部使用 Error = Target - Actual，并按 |Error| 动态计算 KpNow。
     // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
     servo_pid.Actual = (float)image_process_get_final_mid();
-    PID_Update(&servo_pid);
+    servo_pid_up_date(&servo_pid);
 
     // PID 输出是相对中位的角度修正量；底层接口需要以 90 度为中位的绝对逻辑角度。
     control_angle = SERVOMOTOR_CONTROL_CENTER_ANGLE
-        + SERVO_CONTROL_DIRECTION * (servo_pid.Out + servo_pid.OutOffset);
+        + SERVO_CONTROL_DIRECTION * servo_pid.Out;
     servomotor_set_angle(control_angle);
 }

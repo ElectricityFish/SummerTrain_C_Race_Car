@@ -529,6 +529,16 @@
               <FileType>5</FileType>
               <FilePath>..\code\Control.h</FilePath>
             </File>
+            <File>
+              <FileName>Wireless.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\Wireless.c</FilePath>
+            </File>
+            <File>
+              <FileName>Wireless.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\Wireless.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

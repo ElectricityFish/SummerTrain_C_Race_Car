@@ -270,14 +270,21 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
 	}
 
-	//视觉转向 PID 参数。三个参数均以 0.01 为步长在线调节。
+	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。
 	pid_folder = create_menu_folder_dynamic(&head, "PID");
 	servo_pid_folder = create_menu_folder_dynamic(pid_folder, "servo_pid");
 	if(servo_pid_folder != NULL)
 	{
-		create_menu_number_range_dynamic(servo_pid_folder, "kp", &servo_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "KpMin", &servo_pid.KpMin, float_Box, 0.0f, 3.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 3.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
+		item = create_menu_number_dynamic(servo_pid_folder, "KpNow", &servo_pid.KpNow, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
 	}
 
 	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。

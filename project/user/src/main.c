@@ -9,9 +9,12 @@
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
+#include "Wireless.h"
 
 int main(void)
 {
+	
+	//初始化
 	clock_init(SYSTEM_CLOCK_120M);					//初始化芯片时钟，工作频率120MHz
 	debug_init();									//初始化默认Debug串口
 	
@@ -24,13 +27,13 @@ int main(void)
 	ips200_set_dir(IPS200_PORTAIT);					//单排SPI屏，竖屏240×320
 	ips200_init(IPS200_TYPE_SPI);
 
-	//按键扫描周期必须与主循环最后的延时保持一致
 	key_init(MENU_KEY_SCAN_PERIOD_MS);
 	
 	servomotor_init();
 	motor_init();
 	encoder_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
+	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	while(mpu6050_module_init())
 	{
 		ips200_set_color(RGB565_RED, RGB565_BLACK);
@@ -51,8 +54,10 @@ int main(void)
 	menu_init();
 	menu_show();									//显示初始菜单
 	
+	//初始化完成
 	
 	
+	//主循环，进行图像处理与菜单显示等
 	while(1)
 	{
 		image_update();								//接收DMA采集完成的一帧图像
@@ -62,6 +67,14 @@ int main(void)
 		}
 		car_state_command_task();
 		menu_show();								//仅在内容变化时才真正刷新
+		
+		//运行时进行无线调参
+		if(common_state == COMMON_STATE_RUNNING)
+		{
+			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
+			servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+		}
+		
 
 	}
 }
@@ -70,12 +83,14 @@ int main(void)
 
 
 
+//该中断主要负责按键扫描
 void TIM7_5ms_PIT(void)
 {
-	menu_key_task();							//扫描并处理四个菜单按键
+	menu_key_task();							
 }
 
 
+//该中断主要负责传感器读取
 void TIM6_1ms_PIT(void)
 {
 	static uint8_t count=0;
@@ -100,6 +115,7 @@ void TIM6_1ms_PIT(void)
 }
 
 
+//该中断负责运动态控制
 void TIM8_1ms_PIT(void)
 {
 	static uint8_t count=0;

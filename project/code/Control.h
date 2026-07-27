@@ -26,13 +26,10 @@ extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位
 // 图像列坐标的目标偏置：正值表示目标中线向图像右侧移动。
 #define SERVO_CONTROL_IMAGE_CENTER_OFFSET     (0.0f)
 
-// 首次闭环测试的相对转角限幅。确认方向、机械行程和参数后再逐步增大。
-#define SERVO_CONTROL_OUTPUT_LIMIT             (55.0f)
-
 // 1.0f：图像中线右移时输出右转；若实车方向相反，改为 -1.0f。
 #define SERVO_CONTROL_DIRECTION                (1.0f)
 
-extern PID_t servo_pid;
+extern Servo_PID_t servo_pid;
 extern volatile bool servo_control_enabled;
 
 // 初始化视觉舵机 PID；应在摄像头、图像处理和舵机底层初始化完成后调用。

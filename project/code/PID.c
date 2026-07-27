@@ -1,7 +1,7 @@
 #include "PID.h"
 
 
-void PID_Update(PID_t *p)			// Ò»°ãPIDº¯Êı
+void PID_Update(PID_t *p)			// ä¸€èˆ¬PIDå‡½æ•°
 {
 	p->Error1 = p->Error0;
 	p->Error0 = p->Target - p->Actual;
@@ -15,7 +15,7 @@ void PID_Update(PID_t *p)			// Ò»°ãPIDº¯Êı
 		p->ErrorInt = 0;
 	}
 	
-	if(p->ErrorInt>=p->OutMax/2)p->ErrorInt=p->OutMax/2.f;	// »ı·ÖÏŞ·ù
+	if(p->ErrorInt>=p->OutMax/2)p->ErrorInt=p->OutMax/2.f;	// ç§¯åˆ†é™å¹…
 	if(p->ErrorInt<=p->OutMin/2)p->ErrorInt=p->OutMin/2.f;
 	
 	
@@ -28,6 +28,65 @@ void PID_Update(PID_t *p)			// Ò»°ãPIDº¯Êı
 	if (p->Out < p->OutMin) {p->Out = p->OutMin;}
 	
 	p->Actual1=p->Actual;
+}
+
+static float servo_pid_clampf(float value, float min_value, float max_value)
+{
+	if(value < min_value)
+	{
+		return min_value;
+	}
+	if(value > max_value)
+	{
+		return max_value;
+	}
+	return value;
+}
+
+void servo_pid_up_date(Servo_PID_t *p)
+{
+	float abs_error;
+	float error_ratio;
+	float kp_min;
+	float kp_max;
+
+	p->Error1 = p->Error0;
+	p->Error0 = p->Target - p->Actual;
+
+	// èœå•è¯¯è®¾ KpMax < KpMin æ—¶ï¼Œä»¥ KpMin ä¸ºä¸Šé™ï¼Œé¿å…å‡ºç°è´Ÿçš„åŠ¨æ€å¢ç›ŠåŒºé—´ã€‚
+	kp_min = p->KpMin;
+	kp_max = p->KpMax;
+	if(kp_max < kp_min)
+	{
+		kp_max = kp_min;
+	}
+
+	abs_error = (p->Error0 >= 0.0f) ? p->Error0 : -p->Error0;
+	if(p->ErrorFull > 0.0f)
+	{
+		error_ratio = abs_error / p->ErrorFull;
+	}
+	else
+	{
+		error_ratio = 1.0f;
+	}
+	error_ratio = servo_pid_clampf(error_ratio, 0.0f, 1.0f);
+	p->KpNow = kp_min + (kp_max - kp_min) * error_ratio * error_ratio;
+
+	if(p->Ki != 0.0f)
+	{
+		p->ErrorInt += p->Error0;
+	}
+	else
+	{
+		p->ErrorInt = 0.0f;
+	}
+	p->ErrorInt = servo_pid_clampf(p->ErrorInt, p->OutMin / 2.0f, p->OutMax / 2.0f);
+
+	p->Out = p->KpNow * p->Error0
+		+ p->Ki * p->ErrorInt
+		+ p->Kd * (p->Error0 - p->Error1);
+	p->Out = servo_pid_clampf(p->Out, p->OutMin, p->OutMax);
 }
 
 
