@@ -105,12 +105,12 @@ void TIM8_1ms_PIT(void)
 	static uint8_t count=0;
 	count++;
 	
-	if(count>=10)
+	if(count>=20)
 	{
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(4000,4000);
+			motor_set_duty(2000,2000);
 			servo_control();
 		}
 		else

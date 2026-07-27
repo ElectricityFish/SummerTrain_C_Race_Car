@@ -27,7 +27,7 @@ extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位
 #define SERVO_CONTROL_IMAGE_CENTER_OFFSET     (0.0f)
 
 // 首次闭环测试的相对转角限幅。确认方向、机械行程和参数后再逐步增大。
-#define SERVO_CONTROL_OUTPUT_LIMIT             (20.0f)
+#define SERVO_CONTROL_OUTPUT_LIMIT             (55.0f)
 
 // 1.0f：图像中线右移时输出右转；若实车方向相反，改为 -1.0f。
 #define SERVO_CONTROL_DIRECTION                (1.0f)
