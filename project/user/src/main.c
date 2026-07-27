@@ -58,7 +58,6 @@ int main(void)
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
-			car_protection_check_image(image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
 		}
 		car_state_command_task();
@@ -111,7 +110,7 @@ void TIM8_1ms_PIT(void)
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(2000,2000);
+			motor_set_duty(4000,4000);
 			servo_control();
 		}
 		else

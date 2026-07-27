@@ -14,7 +14,6 @@ PID_t servo_pid;
 volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
-static uint8 car_gray_frame_count;
 
 static float control_absf(float value)
 {
@@ -70,7 +69,6 @@ void control_init(void)
     car_go_command = 0U;
     car_protection_reason = CAR_PROTECTION_REASON_NONE;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
-    car_gray_frame_count = 0U;
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
@@ -131,66 +129,6 @@ void car_protection_check_attitude(void)
     else
     {
         car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_ATTITUDE;
-    }
-}
-
-void car_protection_check_image(const uint8 *image, uint16 width, uint16 height)
-{
-    uint8 gray_min = 255U;
-    uint8 gray_max = 0U;
-    uint16 row;
-    uint16 col;
-
-    if((image == NULL) || (width == 0U) || (height == 0U))
-    {
-        return;
-    }
-
-    // IDLE 下不累积灰帧，下一次发车需要重新连续检测三帧。
-    if(common_state == COMMON_STATE_IDLE)
-    {
-        car_gray_frame_count = 0U;
-        car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_IMAGE;
-        return;
-    }
-
-    // 4x4 均匀抽样仅检查约 1/16 像素，足以发现整帧低对比度且不影响循迹实时性。
-    for(row = 0U; row < height; row += CAR_PROTECTION_IMAGE_SAMPLE_STEP)
-    {
-        for(col = 0U; col < width; col += CAR_PROTECTION_IMAGE_SAMPLE_STEP)
-        {
-            uint8 gray = image[(uint32)row * width + col];
-
-            if(gray < gray_min)
-            {
-                gray_min = gray;
-            }
-            if(gray > gray_max)
-            {
-                gray_max = gray;
-            }
-        }
-    }
-
-    if((uint8)(gray_max - gray_min) <= CAR_PROTECTION_IMAGE_GRAY_RANGE_MAX)
-    {
-        if(car_gray_frame_count < CAR_PROTECTION_IMAGE_GRAY_FRAME_COUNT)
-        {
-            car_gray_frame_count++;
-        }
-        if(car_gray_frame_count >= CAR_PROTECTION_IMAGE_GRAY_FRAME_COUNT)
-        {
-            car_protection_active_reason |= CAR_PROTECTION_REASON_IMAGE;
-            if(common_state == COMMON_STATE_RUNNING)
-            {
-                car_state_enter_protect(CAR_PROTECTION_REASON_IMAGE);
-            }
-        }
-    }
-    else
-    {
-        car_gray_frame_count = 0U;
-        car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_IMAGE;
     }
 }
 
