@@ -1,5 +1,4 @@
 #include "MyMenu.h"
-
 #include "zf_common_font.h"
 #include "zf_device_ips200.h"
 #include "zf_device_key.h"
@@ -8,6 +7,7 @@
 #include "Control.h"
 #include "Encoder.h"
 #include "Kfilter.h"
+#include "Wireless.h"
 
 #define MENU_FONT_WIDTH             (8)
 #define MENU_FONT_HEIGHT            (16)
@@ -24,9 +24,13 @@ static Menu_Item *image_preview_item = NULL;
 static Menu_Item *image_fps_item = NULL;
 static Menu_Item *check_folder = NULL;
 static Menu_Item *cargo_folder = NULL;
+static Menu_Item *image_send_folder = NULL;
+static Menu_Item *image_send_item = NULL;
 static uint16 image_fps_menu_value = 0;
 static uint8 cargo_state_menu_value = COMMON_STATE_IDLE;
 static uint8 cargo_fault_menu_value = CAR_PROTECTION_REASON_NONE;
+static uint8 image_send_status_menu_value = WIRELESS_IMAGE_SEND_NOT_SENT;
+static uint8 image_send_action_menu_value = 0;
 static int16 check_encoder1_menu_value = 0;
 static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
@@ -108,6 +112,12 @@ static bool menu_is_cargo_page(void)
 	return (key != NULL && key->father == cargo_folder);
 }
 
+// 判断当前显示的是否为 Check/send_img 页面。该页需要实时刷新单帧图传状态。
+static bool menu_is_image_send_page(void)
+{
+	return (key != NULL && key->father == image_send_folder);
+}
+
 static bool menu_update_cargo_values(void)
 {
 	uint8 state_value = (uint8)common_state;
@@ -125,6 +135,19 @@ static bool menu_update_cargo_values(void)
 		changed = true;
 	}
 	return changed;
+}
+
+static bool menu_update_image_send_status(void)
+{
+	uint8 status_value = wireless_image_send_status;
+
+	if(image_send_status_menu_value == status_value)
+	{
+		return false;
+	}
+
+	image_send_status_menu_value = status_value;
+	return true;
 }
 
 //把中断中更新的脉冲结果同步到菜单绑定变量，返回值表示本次是否有变化。
@@ -314,6 +337,22 @@ void menu_init(void)
 	{
 		item->editable = false;
 	}
+	// 图传页面：Status 为只读状态，Send 为 KEY3 触发的单帧图像发送按钮。
+	image_send_status_menu_value = wireless_image_send_status;
+	image_send_folder = create_menu_folder_dynamic(check_folder, "send_img");
+	if(image_send_folder != NULL)
+	{
+		item = create_menu_number_dynamic(image_send_folder, "Status", &image_send_status_menu_value, uint8_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		image_send_item = create_menu_number_dynamic(image_send_folder, "Send", &image_send_action_menu_value, uint8_Box);
+		if(image_send_item != NULL)
+		{
+			image_send_item->editable = false;
+		}
+	}
 
 	key = head.first_son;
 	menu_view_first = 0;
@@ -395,6 +434,14 @@ void key_enter(void)
 {
 	if(key == NULL)
 	{
+		return;
+	}
+
+	// KEY3 在 Send 行只置发送请求；真正的数据复制与发送由主循环完成。
+	if(key == image_send_item)
+	{
+		wireless_image_request_send();
+		menu_refresh_required = true;
 		return;
 	}
 
@@ -590,7 +637,11 @@ static void show_number(void)
 		else
 		{
 			ips200_set_color(item->select ? RGB565_YELLOW : RGB565_GREEN, RGB565_BLACK);
-			switch(item->kind)
+			if(item == image_send_item)
+			{
+				menu_show_text(MENU_VALUE_X, y, "KEY3", 4);
+			}
+			else switch(item->kind)
 			{
 				case uint8_Box:
 					ips200_show_uint(MENU_VALUE_X, y, *(uint8_t *)item->data, 3);
@@ -650,6 +701,7 @@ void menu_show(void)
 	uint16 latest_fps;
 	bool check_value_changed;
 	bool cargo_value_changed;
+	bool image_send_status_changed;
 
 	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
 	latest_fps = image_get_capture_fps();
@@ -664,6 +716,7 @@ void menu_show(void)
 
 	check_value_changed = menu_update_check_values();
 	cargo_value_changed = menu_update_cargo_values();
+	image_send_status_changed = menu_update_image_send_status();
 
 	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
 	if(menu_is_image_preview())
@@ -677,7 +730,8 @@ void menu_show(void)
 	{
 		//Check页面的名称和光标不变时，仅覆盖数值，避免周期刷新时全屏清除。
 		if((menu_is_check_page() && check_value_changed)
-			|| (menu_is_cargo_page() && cargo_value_changed))
+			|| (menu_is_cargo_page() && cargo_value_changed)
+			|| (menu_is_image_send_page() && image_send_status_changed))
 		{
 			ips200_set_font(IPS200_8X16_FONT);
 			show_number();

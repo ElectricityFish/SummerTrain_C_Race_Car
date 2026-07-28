@@ -56,17 +56,18 @@ int main(void)
 	
 	//初始化完成
 	
-	//先发一次0参数，方便在上位机上区分
-	//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",0.f,0.f,
-	//		0.f,0.f,0.f);
-	//主循环，进行图像处理与菜单显示等
+	
 	while(1)
 	{
+		
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
+			//仅在 IDLE 且菜单已请求时，先保存刚完成的一帧快照，再通过无线串口发送至 VOFA+。
+			wireless_image_send_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
 		}
+		
 		car_state_command_task();
 		menu_show();								//仅在内容变化时才真正刷新
 		
@@ -75,8 +76,6 @@ int main(void)
 		{
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
-			//encoder1/encoder2为int16；传入可变参数时提升为int，必须使用%d而不能使用%f。
-			wireless_uart_printf("%.2f,%.2f\n", (float)encoder1, (float)encoder2);
 		}
 		
 
