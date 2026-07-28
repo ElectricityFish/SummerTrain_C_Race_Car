@@ -95,7 +95,7 @@ uint32 wireless_uart_send_byte (const uint8 data)
 // 使用示例     wireless_uart_send_buffer(buff, 64);
 // 备注信息     
 //-------------------------------------------------------------------------------------------------------------------
-uint32 wireless_uart_send_buffer (const uint8 *buff, uint32 len)
+uint32 wireless_uart_send_buffer_timeout (const uint8 *buff, uint32 len, uint16 timeout_ms)
 {
     zf_assert(NULL != buff);
     uint16 time_count = 0;
@@ -119,7 +119,7 @@ uint32 wireless_uart_send_buffer (const uint8 *buff, uint32 len)
         }
         else                                                                    // 如果RTS为高电平 则模块忙
         {
-            if(WIRELESS_UART_TIMEOUT_COUNT <= (++ time_count))                  // 超出了最大等待时间
+            if(timeout_ms <= (++ time_count))                                    // 超出了最大等待时间
             {
                 break;                                                          // 退出发送
             }
@@ -127,6 +127,17 @@ uint32 wireless_uart_send_buffer (const uint8 *buff, uint32 len)
         }
     }
     return len;
+}
+
+//-------------------------------------------------------------------------------------------------------------------
+// 函数简介     无线转串口模块按默认 RTS 超时上限发送数据块
+// 参数说明     *buff           发送缓冲区
+// 参数说明     len             发送数据长度
+// 返回参数     uint32          剩余发送长度
+//-------------------------------------------------------------------------------------------------------------------
+uint32 wireless_uart_send_buffer (const uint8 *buff, uint32 len)
+{
+    return wireless_uart_send_buffer_timeout(buff, len, WIRELESS_UART_TIMEOUT_COUNT);
 }
 
 //-------------------------------------------------------------------------------------------------------------------

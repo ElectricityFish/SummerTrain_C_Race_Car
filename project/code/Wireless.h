@@ -16,17 +16,27 @@ typedef enum
     WIRELESS_IMAGE_SEND_FAILED,
 } wireless_image_send_state_enum;
 
+typedef enum
+{
+    WIRELESS_IMAGE_SEND_ORIGIN = 0,
+    WIRELESS_IMAGE_SEND_PROCESSED,
+    WIRELESS_IMAGE_SEND_BOTH,
+} wireless_image_send_type_enum;
+
 extern volatile uint8 wireless_image_send_status;
 
-//用法与printf一致，例如：wireless_uart_printf("pitch = %.2f\r\n", pitch);
+//用法与printf一致，例如：wireless_uart_printf("pitch = %.2f\n", pitch);
 //返回值：成功时返回实际发送的字符数；格式化失败、消息过长或无线发送超时返回-1。
 int wireless_uart_printf(const char *format, ...);
 
 // 可从按键中断调用：只记录一次发送请求，不进行复制、格式化或串口阻塞发送。
-void wireless_image_request_send(void);
+void wireless_image_request_send(wireless_image_send_type_enum send_type);
 
 // 仅应在获取到一帧完整图像后由主循环调用。
-// is_idle 为 false 时，已收到的请求会继续等待；为 true 时复制快照并发送一张 VOFA+ FireWater 灰度图。
-void wireless_image_send_task(bool is_idle, const uint8 *image_addr, uint16 image_width, uint16 image_height);
+// is_idle 为 false 时，已收到的请求会继续等待；为 true 时复制快照，等待本帧图像处理完成。
+void wireless_image_capture_task(bool is_idle, const uint8 *image_addr, uint16 image_width, uint16 image_height);
+
+// 在本帧 image_process_frame() 完成后由主循环调用，发送原图或叠加赛道标记后的图像。
+void wireless_image_send_task(void);
 
 #endif

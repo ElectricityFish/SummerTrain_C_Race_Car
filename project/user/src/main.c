@@ -63,9 +63,10 @@ int main(void)
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
-			//仅在 IDLE 且菜单已请求时，先保存刚完成的一帧快照，再通过无线串口发送至 VOFA+。
-			wireless_image_send_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
+			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
+			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
+			wireless_image_send_task();
 		}
 		
 		car_state_command_task();

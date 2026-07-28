@@ -86,6 +86,8 @@ typedef enum
 
 uint32      wireless_uart_send_byte         (const uint8 data);
 uint32      wireless_uart_send_buffer       (const uint8 *buff, uint32 len);
+// 自定义 RTS 忙等待上限，单位为毫秒。普通发送仍使用 wireless_uart_send_buffer() 的默认上限。
+uint32      wireless_uart_send_buffer_timeout(const uint8 *buff, uint32 len, uint16 timeout_ms);
 uint32      wireless_uart_send_string       (const char *str);
 void        wireless_uart_send_image        (const uint8 *image_addr, uint32 image_size);
 

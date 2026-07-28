@@ -25,7 +25,9 @@ static Menu_Item *image_fps_item = NULL;
 static Menu_Item *check_folder = NULL;
 static Menu_Item *cargo_folder = NULL;
 static Menu_Item *image_send_folder = NULL;
-static Menu_Item *image_send_item = NULL;
+static Menu_Item *image_send_origin_item = NULL;
+static Menu_Item *image_send_processed_item = NULL;
+static Menu_Item *image_send_both_item = NULL;
 static uint16 image_fps_menu_value = 0;
 static uint8 cargo_state_menu_value = COMMON_STATE_IDLE;
 static uint8 cargo_fault_menu_value = CAR_PROTECTION_REASON_NONE;
@@ -337,7 +339,7 @@ void menu_init(void)
 	{
 		item->editable = false;
 	}
-	// 图传页面：Status 为只读状态，Send 为 KEY3 触发的单帧图像发送按钮。
+	// 图传页面：Status 为只读状态，send_O/send_P/send_B 分别发送原图、处理图、两图。
 	image_send_status_menu_value = wireless_image_send_status;
 	image_send_folder = create_menu_folder_dynamic(check_folder, "send_img");
 	if(image_send_folder != NULL)
@@ -347,10 +349,20 @@ void menu_init(void)
 		{
 			item->editable = false;
 		}
-		image_send_item = create_menu_number_dynamic(image_send_folder, "Send", &image_send_action_menu_value, uint8_Box);
-		if(image_send_item != NULL)
+		image_send_origin_item = create_menu_number_dynamic(image_send_folder, "send_O", &image_send_action_menu_value, uint8_Box);
+		if(image_send_origin_item != NULL)
 		{
-			image_send_item->editable = false;
+			image_send_origin_item->editable = false;
+		}
+		image_send_processed_item = create_menu_number_dynamic(image_send_folder, "send_P", &image_send_action_menu_value, uint8_Box);
+		if(image_send_processed_item != NULL)
+		{
+			image_send_processed_item->editable = false;
+		}
+		image_send_both_item = create_menu_number_dynamic(image_send_folder, "send_B", &image_send_action_menu_value, uint8_Box);
+		if(image_send_both_item != NULL)
+		{
+			image_send_both_item->editable = false;
 		}
 	}
 
@@ -437,10 +449,22 @@ void key_enter(void)
 		return;
 	}
 
-	// KEY3 在 Send 行只置发送请求；真正的数据复制与发送由主循环完成。
-	if(key == image_send_item)
+	// KEY3 在发送行只置发送请求；真正的数据复制与发送由主循环完成。
+	if(key == image_send_origin_item)
 	{
-		wireless_image_request_send();
+		wireless_image_request_send(WIRELESS_IMAGE_SEND_ORIGIN);
+		menu_refresh_required = true;
+		return;
+	}
+	if(key == image_send_processed_item)
+	{
+		wireless_image_request_send(WIRELESS_IMAGE_SEND_PROCESSED);
+		menu_refresh_required = true;
+		return;
+	}
+	if(key == image_send_both_item)
+	{
+		wireless_image_request_send(WIRELESS_IMAGE_SEND_BOTH);
 		menu_refresh_required = true;
 		return;
 	}
@@ -637,7 +661,7 @@ static void show_number(void)
 		else
 		{
 			ips200_set_color(item->select ? RGB565_YELLOW : RGB565_GREEN, RGB565_BLACK);
-			if(item == image_send_item)
+			if(item == image_send_origin_item || item == image_send_processed_item || item == image_send_both_item)
 			{
 				menu_show_text(MENU_VALUE_X, y, "KEY3", 4);
 			}

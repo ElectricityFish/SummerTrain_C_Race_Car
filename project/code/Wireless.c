@@ -5,15 +5,28 @@
 #include <string.h>
 
 #include "zf_device_mt9v03x.h"
+#include "Image_Process.h"
 
-#define WIRELESS_IMAGE_VOFA_CHANNEL_ID        (0U)
+#define WIRELESS_IMAGE_VOFA_ORIGIN_CHANNEL_ID (0U)
+#define WIRELESS_IMAGE_VOFA_PROCESSED_CHANNEL_ID (1U)
 #define WIRELESS_IMAGE_VOFA_GRAYSCALE8_FORMAT (24U)
+#define WIRELESS_IMAGE_VOFA_RGB565_FORMAT      (7U)
 #define WIRELESS_IMAGE_VOFA_HEADER_SIZE       (64U)
+#define WIRELESS_IMAGE_RTS_TIMEOUT_MS          (8000U)
+
+#define WIRELESS_IMAGE_RGB565_RED              (0xF800U)
+#define WIRELESS_IMAGE_RGB565_BLUE             (0x001FU)
+#define WIRELESS_IMAGE_RGB565_GREEN            (0x07E0U)
+#define WIRELESS_IMAGE_RGB565_YELLOW           (0xFFE0U)
 
 volatile uint8 wireless_image_send_status = WIRELESS_IMAGE_SEND_NOT_SENT;
 
 // 必须先保存快照：摄像头 DMA 会持续改写 mt9v03x_image，不能在约 2 秒的串口发送期间直接读取它。
 static uint8 wireless_image_snapshot[MT9V03X_IMAGE_SIZE];
+// 处理图逐行生成、逐行发送，避免再占用 45120 字节的 RGB565 全帧缓冲。
+static uint16 wireless_image_processed_line[MT9V03X_W];
+static volatile uint8 wireless_image_send_type = WIRELESS_IMAGE_SEND_ORIGIN;
+static bool wireless_image_snapshot_ready = false;
 
 //提供和printf相同的可变参数调用方式，底层复用厂商无线串口的RTS流控发送函数。
 int wireless_uart_printf(const char *format, ...)
@@ -48,22 +61,23 @@ int wireless_uart_printf(const char *format, ...)
 }
 
 // 此函数可在按键中断中调用，只修改一个 8 位状态标志，不进行耗时操作。
-void wireless_image_request_send(void)
+void wireless_image_request_send(wireless_image_send_type_enum send_type)
 {
     if(wireless_image_send_status != WIRELESS_IMAGE_SEND_SENDING)
     {
+        wireless_image_send_type = (uint8)send_type;
+        wireless_image_snapshot_ready = false;
         wireless_image_send_status = WIRELESS_IMAGE_SEND_SENDING;
     }
 }
 
-// 发送 FireWater 图片前导帧，再紧跟完整的 8 位灰度图像数据。
-void wireless_image_send_task(bool is_idle, const uint8 *image_addr, uint16 image_width, uint16 image_height)
+// 在 DMA 完成后立即保存原图，保证后续图像处理和长时间串口发送都不会读到被 DMA 改写的像素。
+void wireless_image_capture_task(bool is_idle, const uint8 *image_addr, uint16 image_width, uint16 image_height)
 {
-    char image_header[WIRELESS_IMAGE_VOFA_HEADER_SIZE];
     uint32 image_size;
-    int header_length;
 
-    if(wireless_image_send_status != WIRELESS_IMAGE_SEND_SENDING || !is_idle)
+    if(wireless_image_send_status != WIRELESS_IMAGE_SEND_SENDING
+        || wireless_image_snapshot_ready || !is_idle)
     {
         return;
     }
@@ -78,23 +92,142 @@ void wireless_image_send_task(bool is_idle, const uint8 *image_addr, uint16 imag
 
     // image_addr 指向刚完成 DMA 的一帧。复制完成后，后续 DMA 改写不会影响本次发送。
     memcpy(wireless_image_snapshot, image_addr, image_size);
+    wireless_image_snapshot_ready = true;
+}
+
+static bool wireless_image_send_header(uint8 channel_id, uint32 image_size, uint16 image_width, uint16 image_height, uint8 image_format)
+{
+    char image_header[WIRELESS_IMAGE_VOFA_HEADER_SIZE];
+    int header_length;
 
     header_length = snprintf(
         image_header,
         sizeof(image_header),
         "image:%u,%lu,%u,%u,%u\n",
-        (unsigned int)WIRELESS_IMAGE_VOFA_CHANNEL_ID,
+        (unsigned int)channel_id,
         (unsigned long)image_size,
         (unsigned int)image_width,
         (unsigned int)image_height,
-        (unsigned int)WIRELESS_IMAGE_VOFA_GRAYSCALE8_FORMAT);
-    if(header_length <= 0 || header_length >= (int)sizeof(image_header)
-        || wireless_uart_send_buffer((const uint8 *)image_header, (uint32)header_length) != 0U
-        || wireless_uart_send_buffer(wireless_image_snapshot, image_size) != 0U)
+        (unsigned int)image_format);
+    if(header_length <= 0 || header_length >= (int)sizeof(image_header))
     {
-        wireless_image_send_status = WIRELESS_IMAGE_SEND_FAILED;
+        return false;
+    }
+    return (wireless_uart_send_buffer_timeout(
+        (const uint8 *)image_header,
+        (uint32)header_length,
+        WIRELESS_IMAGE_RTS_TIMEOUT_MS) == 0U);
+}
+
+static uint16 wireless_image_gray_to_rgb565(uint8 gray)
+{
+    return (uint16)(((uint16)(gray & 0xF8U) << 8)
+        | ((uint16)(gray & 0xFCU) << 3)
+        | ((uint16)gray >> 3));
+}
+
+static bool wireless_image_send_origin(uint8 channel_id)
+{
+    if(!wireless_image_send_header(
+        channel_id,
+        MT9V03X_IMAGE_SIZE,
+        MT9V03X_W,
+        MT9V03X_H,
+        WIRELESS_IMAGE_VOFA_GRAYSCALE8_FORMAT))
+    {
+        return false;
+    }
+
+    return (wireless_uart_send_buffer_timeout(
+        wireless_image_snapshot,
+        MT9V03X_IMAGE_SIZE,
+        WIRELESS_IMAGE_RTS_TIMEOUT_MS) == 0U);
+}
+
+static bool wireless_image_send_processed(uint8 channel_id)
+{
+    uint16 row;
+    uint32 image_size = (uint32)MT9V03X_IMAGE_SIZE * sizeof(uint16);
+    uint8 reference_col = image_process_get_reference_col();
+
+    if(!wireless_image_send_header(
+        channel_id,
+        image_size,
+        MT9V03X_W,
+        MT9V03X_H,
+        WIRELESS_IMAGE_VOFA_RGB565_FORMAT))
+    {
+        return false;
+    }
+
+    for(row = 0U; row < MT9V03X_H; row++)
+    {
+        uint16 col;
+        uint16 left_edge = image_left_edge[row];
+        uint16 right_edge = image_right_edge[row];
+        uint16 mid_line = image_mid_line[row];
+
+        for(col = 0U; col < MT9V03X_W; col++)
+        {
+            wireless_image_processed_line[col] = wireless_image_gray_to_rgb565(
+                wireless_image_snapshot[row * MT9V03X_W + col]);
+        }
+
+        // 与 image_process_display() 保持相同的绘制顺序，后绘制的参考列覆盖同位置的其他标记。
+        if(left_edge < MT9V03X_W)
+        {
+            wireless_image_processed_line[left_edge] = WIRELESS_IMAGE_RGB565_RED;
+        }
+        if(right_edge < MT9V03X_W)
+        {
+            wireless_image_processed_line[right_edge] = WIRELESS_IMAGE_RGB565_BLUE;
+        }
+        if(mid_line < MT9V03X_W)
+        {
+            wireless_image_processed_line[mid_line] = WIRELESS_IMAGE_RGB565_GREEN;
+        }
+        if(reference_col < MT9V03X_W)
+        {
+            wireless_image_processed_line[reference_col] = WIRELESS_IMAGE_RGB565_YELLOW;
+        }
+
+        if(wireless_uart_send_buffer_timeout(
+            (const uint8 *)wireless_image_processed_line,
+            (uint32)MT9V03X_W * sizeof(uint16),
+            WIRELESS_IMAGE_RTS_TIMEOUT_MS) != 0U)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// 发送 FireWater 图片前导帧和图片数据。必须在 image_process_frame() 后调用，才能发送叠加结果。
+void wireless_image_send_task(void)
+{
+    bool send_success;
+
+    if(wireless_image_send_status != WIRELESS_IMAGE_SEND_SENDING || !wireless_image_snapshot_ready)
+    {
         return;
     }
 
-    wireless_image_send_status = WIRELESS_IMAGE_SEND_SUCCESS;
+    if(wireless_image_send_type == WIRELESS_IMAGE_SEND_PROCESSED)
+    {
+        send_success = wireless_image_send_processed(WIRELESS_IMAGE_VOFA_PROCESSED_CHANNEL_ID);
+    }
+    else if(wireless_image_send_type == WIRELESS_IMAGE_SEND_BOTH)
+    {
+        // 两张图都由同一份 wireless_image_snapshot 生成，保证原图与处理结果一一对应。
+        send_success = wireless_image_send_origin(WIRELESS_IMAGE_VOFA_ORIGIN_CHANNEL_ID)
+            && wireless_image_send_processed(WIRELESS_IMAGE_VOFA_PROCESSED_CHANNEL_ID);
+    }
+    else
+    {
+        send_success = wireless_image_send_origin(WIRELESS_IMAGE_VOFA_ORIGIN_CHANNEL_ID);
+    }
+
+    wireless_image_send_status = send_success ? WIRELESS_IMAGE_SEND_SUCCESS : WIRELESS_IMAGE_SEND_FAILED;
+    wireless_image_snapshot_ready = false;
 }
