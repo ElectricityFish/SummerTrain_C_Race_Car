@@ -56,7 +56,9 @@ int main(void)
 	
 	//初始化完成
 	
-	
+	//先发一次0参数，方便在上位机上区分
+	//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",0.f,0.f,
+	//		0.f,0.f,0.f);
 	//主循环，进行图像处理与菜单显示等
 	while(1)
 	{
@@ -71,8 +73,10 @@ int main(void)
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
-			servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
+			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			//encoder1/encoder2为int16；传入可变参数时提升为int，必须使用%d而不能使用%f。
+			wireless_uart_printf("%.2f,%.2f\n", (float)encoder1, (float)encoder2);
 		}
 		
 
