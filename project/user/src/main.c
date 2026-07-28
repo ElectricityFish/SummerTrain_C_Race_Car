@@ -10,6 +10,7 @@
 #include "Kfilter.h"
 #include "Promopt.h"
 #include "Wireless.h"
+#include "FS-A8S.h"
 
 int main(void)
 {
@@ -34,6 +35,7 @@ int main(void)
 	encoder_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
+	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
 	while(mpu6050_module_init())
 	{
 		ips200_set_color(RGB565_RED, RGB565_BLACK);
@@ -102,6 +104,7 @@ void TIM6_1ms_PIT(void)
 	count1++;
 	count++;
 	image_fps_1ms_task();							//每1ms计时，按1秒窗口统计实际采集帧率
+	fs_a8s_1ms_task();							//i-BUS 最后有效帧超时计时
 	promopt_tick();
 	if(count1>=10)									// 每10ms进行一次姿态解算
 	{
@@ -125,6 +128,15 @@ void TIM8_1ms_PIT(void)
 	static uint8_t count=0;
 	count++;
 	
+	// 无线模式下 CH5 低位或 i-BUS 失联时，每 1ms 强制关闭执行器。
+	if(wireless_control_enabled && !wireless_control_actuators_permitted())
+	{
+		motor_set_duty(0, 0);
+		servomotor_disable();
+		count = 0;
+		return;
+	}
+
 	if(count>=20)
 	{
 		count=0;
@@ -132,6 +144,10 @@ void TIM8_1ms_PIT(void)
 		{
 			motor_set_duty(2000,2000);
 			servo_control();
+		}
+		else if(common_state == COMMON_STATE_PLAY)
+		{
+			wireless_control_play_task();
 		}
 		else
 		{

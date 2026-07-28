@@ -539,6 +539,16 @@
               <FileType>5</FileType>
               <FilePath>..\code\Wireless.h</FilePath>
             </File>
+            <File>
+              <FileName>FS-A8S.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\FS-A8S.c</FilePath>
+            </File>
+            <File>
+              <FileName>FS-A8S.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\FS-A8S.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>

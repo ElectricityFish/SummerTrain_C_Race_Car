@@ -8,6 +8,7 @@ typedef enum
 {
 	COMMON_STATE_IDLE = 0,
 	COMMON_STATE_RUNNING,
+	COMMON_STATE_PLAY,
 	COMMON_STATE_PROTECT
 } Common_State;
 
@@ -21,6 +22,7 @@ typedef enum
 extern volatile Common_State common_state;
 extern volatile uint8 car_go_command;             // CarGo/RunCmd：0 停车，1 请求发车
 extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位图
+extern volatile uint8 wireless_control_enabled;   // Wireless_Control/Enable：0 关闭，1 开启
 
 
 // 图像列坐标的目标偏置：正值表示目标中线向图像右侧移动。
@@ -35,10 +37,17 @@ extern volatile bool servo_control_enabled;
 // 初始化视觉舵机 PID；应在摄像头、图像处理和舵机底层初始化完成后调用。
 void control_init(void);
 
-// 在主循环调用，处理菜单的发车/停车请求。Protect 只能在故障消失且 RunCmd=0 时退回 IDLE。
+// 在主循环调用，处理 Base_Control 或 Wireless_Control 的状态请求。
+// Protect 只能在故障消失且状态请求为 IDLE 时退回 IDLE。
 void car_state_command_task(void);
 
-// 在姿态解算完成后调用；仅 RUNNING 状态命中条件时进入 Protect。
+// 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
+bool wireless_control_actuators_permitted(void);
+
+// PLAY 状态下按 CH1/CH3 刷新舵机和双电机输出；由 20ms 执行器任务调用。
+void wireless_control_play_task(void);
+
+// 在姿态解算完成后调用；RUNNING 与 PLAY 状态命中条件时进入 Protect。
 void car_protection_check_attitude(void);
 
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。

@@ -4,16 +4,31 @@
 #include "Kfilter.h"
 #include "Motor.h"
 #include "ServoMotor.h"
+#include "FS-A8S.h"
 
 
 volatile Common_State common_state;
 volatile uint8 car_go_command;
 volatile uint8 car_protection_reason;
+volatile uint8 wireless_control_enabled;
 
 Servo_PID_t servo_pid;
 volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
+static uint8 wireless_control_enabled_last;
+
+#define WIRELESS_SWITCH_LOW_MAX             (1250U)
+#define WIRELESS_SWITCH_HIGH_MIN            (1750U)
+#define WIRELESS_MOTOR_CHANNEL_MIN          (1000U)
+#define WIRELESS_MOTOR_NEGATIVE_END         (1480U)
+#define WIRELESS_MOTOR_POSITIVE_START       (1520U)
+#define WIRELESS_MOTOR_CHANNEL_MAX          (2000U)
+#define WIRELESS_MOTOR_MAX_DUTY             (2500)
+#define WIRELESS_STEER_CHANNEL_MIN          (1000U)
+#define WIRELESS_STEER_LEFT_END             (1485U)
+#define WIRELESS_STEER_RIGHT_START          (1515U)
+#define WIRELESS_STEER_CHANNEL_MAX          (2000U)
 
 static float control_absf(float value)
 {
@@ -25,6 +40,18 @@ static void car_state_stop_actuators(void)
     motor_set_duty(0, 0);
     servo_control_set_enabled(false);
     servomotor_disable();
+}
+
+static bool wireless_control_ch5_permitted(void)
+{
+    return (fs_a8s_channel_data.channel[4] >= WIRELESS_SWITCH_HIGH_MIN);
+}
+
+bool wireless_control_actuators_permitted(void)
+{
+    return (wireless_control_enabled != 0U)
+        && fs_a8s_is_online()
+        && wireless_control_ch5_permitted();
 }
 
 static void car_state_apply(Common_State next_state)
@@ -42,6 +69,128 @@ static void car_state_apply(Common_State next_state)
     else
     {
         car_state_stop_actuators();
+    }
+}
+
+static void car_state_process_base_command(void)
+{
+    if(car_go_command == 0U)
+    {
+        if(common_state == COMMON_STATE_RUNNING)
+        {
+            car_state_apply(COMMON_STATE_IDLE);
+        }
+        else if((common_state == COMMON_STATE_PROTECT)
+            && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+        {
+            // Protect 退出必须由人工把 RunCmd 置 0 确认；不会自动恢复运行。
+            car_protection_reason = CAR_PROTECTION_REASON_NONE;
+            car_state_apply(COMMON_STATE_IDLE);
+        }
+    }
+    else if((common_state == COMMON_STATE_IDLE)
+        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+    {
+        car_state_apply(COMMON_STATE_RUNNING);
+    }
+}
+
+static int16 wireless_control_get_motor_duty(uint16 channel_value)
+{
+    int32 duty;
+
+    if(channel_value <= WIRELESS_MOTOR_CHANNEL_MIN)
+    {
+        return -WIRELESS_MOTOR_MAX_DUTY;
+    }
+    if(channel_value < WIRELESS_MOTOR_NEGATIVE_END)
+    {
+        duty = -((int32)(WIRELESS_MOTOR_NEGATIVE_END - channel_value)
+            * WIRELESS_MOTOR_MAX_DUTY
+            / (WIRELESS_MOTOR_NEGATIVE_END - WIRELESS_MOTOR_CHANNEL_MIN));
+        return (int16)duty;
+    }
+    if(channel_value <= WIRELESS_MOTOR_POSITIVE_START)
+    {
+        return 0;
+    }
+    if(channel_value < WIRELESS_MOTOR_CHANNEL_MAX)
+    {
+        duty = (int32)(channel_value - WIRELESS_MOTOR_POSITIVE_START)
+            * WIRELESS_MOTOR_MAX_DUTY
+            / (WIRELESS_MOTOR_CHANNEL_MAX - WIRELESS_MOTOR_POSITIVE_START);
+        return (int16)duty;
+    }
+    return WIRELESS_MOTOR_MAX_DUTY;
+}
+
+static float wireless_control_get_steering_angle(uint16 channel_value)
+{
+    float ratio;
+
+    if(channel_value <= WIRELESS_STEER_CHANNEL_MIN)
+    {
+        return SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE;
+    }
+    if(channel_value < WIRELESS_STEER_LEFT_END)
+    {
+        ratio = (float)(channel_value - WIRELESS_STEER_CHANNEL_MIN)
+            / (float)(WIRELESS_STEER_LEFT_END - WIRELESS_STEER_CHANNEL_MIN);
+        return SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE
+            + ratio * (SERVOMOTOR_CONTROL_CENTER_ANGLE - SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE);
+    }
+    if(channel_value <= WIRELESS_STEER_RIGHT_START)
+    {
+        return SERVOMOTOR_CONTROL_CENTER_ANGLE;
+    }
+    if(channel_value < WIRELESS_STEER_CHANNEL_MAX)
+    {
+        ratio = (float)(channel_value - WIRELESS_STEER_RIGHT_START)
+            / (float)(WIRELESS_STEER_CHANNEL_MAX - WIRELESS_STEER_RIGHT_START);
+        return SERVOMOTOR_CONTROL_CENTER_ANGLE
+            + ratio * (SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE - SERVOMOTOR_CONTROL_CENTER_ANGLE);
+    }
+    return SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE;
+}
+
+static void wireless_control_process_state(void)
+{
+    uint16 channel_6 = fs_a8s_channel_data.channel[5];
+
+    if(!wireless_control_actuators_permitted())
+    {
+        car_go_command = 0U;
+        car_state_stop_actuators();
+        if(common_state != COMMON_STATE_PROTECT)
+        {
+            car_state_apply(COMMON_STATE_IDLE);
+        }
+        return;
+    }
+
+    if(channel_6 <= WIRELESS_SWITCH_LOW_MAX)
+    {
+        car_go_command = 0U;
+        if(common_state == COMMON_STATE_PLAY)
+        {
+            car_state_apply(COMMON_STATE_IDLE);
+        }
+        car_state_process_base_command();
+    }
+    else if(channel_6 < WIRELESS_SWITCH_HIGH_MIN)
+    {
+        car_go_command = 1U;
+        if(common_state == COMMON_STATE_PLAY)
+        {
+            car_state_apply(COMMON_STATE_IDLE);
+        }
+        car_state_process_base_command();
+    }
+    else if((common_state != COMMON_STATE_PROTECT)
+        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+    {
+        car_go_command = 0U;
+        car_state_apply(COMMON_STATE_PLAY);
     }
 }
 
@@ -68,6 +217,8 @@ void control_init(void)
     common_state = COMMON_STATE_IDLE;
     car_go_command = 0U;
     car_protection_reason = CAR_PROTECTION_REASON_NONE;
+    wireless_control_enabled = 0U;
+    wireless_control_enabled_last = 0U;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
@@ -89,25 +240,23 @@ void control_init(void)
 
 void car_state_command_task(void)
 {
-    if(car_go_command == 0U)
+    if(wireless_control_enabled != wireless_control_enabled_last)
     {
-        if(common_state == COMMON_STATE_RUNNING)
+        wireless_control_enabled_last = wireless_control_enabled;
+        car_go_command = 0U;
+        if(common_state != COMMON_STATE_PROTECT)
         {
             car_state_apply(COMMON_STATE_IDLE);
         }
-        else if((common_state == COMMON_STATE_PROTECT)
-            && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
-        {
-            // Protect 退出必须由人工把 RunCmd 置 0 确认；不会自动恢复运行。
-            car_protection_reason = CAR_PROTECTION_REASON_NONE;
-            car_state_apply(COMMON_STATE_IDLE);
-        }
     }
-    else if((common_state == COMMON_STATE_IDLE)
-        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+
+    if(wireless_control_enabled != 0U)
     {
-        car_state_apply(COMMON_STATE_RUNNING);
+        wireless_control_process_state();
+        return;
     }
+
+    car_state_process_base_command();
 }
 
 void car_protection_check_attitude(void)
@@ -123,7 +272,7 @@ void car_protection_check_attitude(void)
         || (control_absf(roll) > CAR_PROTECTION_ANGLE_LIMIT_DEG))
     {
         car_protection_active_reason |= CAR_PROTECTION_REASON_ATTITUDE;
-        if(common_state == COMMON_STATE_RUNNING)
+        if(common_state == COMMON_STATE_RUNNING || common_state == COMMON_STATE_PLAY)
         {
             car_state_enter_protect(CAR_PROTECTION_REASON_ATTITUDE);
         }
@@ -132,6 +281,20 @@ void car_protection_check_attitude(void)
     {
         car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_ATTITUDE;
     }
+}
+
+void wireless_control_play_task(void)
+{
+    int16 motor_duty;
+
+    if((common_state != COMMON_STATE_PLAY) || !wireless_control_actuators_permitted())
+    {
+        return;
+    }
+
+    motor_duty = wireless_control_get_motor_duty(fs_a8s_channel_data.channel[2]);
+    motor_set_duty(motor_duty, motor_duty);
+    servomotor_set_angle(wireless_control_get_steering_angle(fs_a8s_channel_data.channel[0]));
 }
 
 void servo_control_set_enabled(bool enabled)

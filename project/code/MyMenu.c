@@ -8,6 +8,7 @@
 #include "Encoder.h"
 #include "Kfilter.h"
 #include "Wireless.h"
+#include "FS-A8S.h"
 
 #define MENU_FONT_WIDTH             (8)
 #define MENU_FONT_HEIGHT            (16)
@@ -22,8 +23,10 @@ Menu_Item *key;		//指向当前光标所在的菜单项
 
 static Menu_Item *image_preview_item = NULL;
 static Menu_Item *image_fps_item = NULL;
-static Menu_Item *check_folder = NULL;
 static Menu_Item *cargo_folder = NULL;
+static Menu_Item *base_control_folder = NULL;
+static Menu_Item *wireless_control_folder = NULL;
+static Menu_Item *check_folder = NULL;
 static Menu_Item *image_send_folder = NULL;
 static Menu_Item *image_send_origin_item = NULL;
 static Menu_Item *image_send_processed_item = NULL;
@@ -38,6 +41,7 @@ static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
 static float check_pitch_menu_value = 0.0f;
 static float check_roll_menu_value = 0.0f;
+static uint32 fs_a8s_menu_frame_count = 0U;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
 static bool menu_refresh_required = true;
@@ -108,16 +112,35 @@ static bool menu_is_check_page(void)
 	return (key != NULL && key->father == check_folder);
 }
 
-// 判断当前显示的是否为 CarGo 目录。该页需要原地刷新状态和故障原因。
-static bool menu_is_cargo_page(void)
+// 判断当前显示的是否为 Base_Control 目录。该页需要原地刷新状态和故障原因。
+static bool menu_is_base_control_page(void)
 {
-	return (key != NULL && key->father == cargo_folder);
+	return (key != NULL && key->father == base_control_folder);
 }
 
 // 判断当前显示的是否为 Check/send_img 页面。该页需要实时刷新单帧图传状态。
 static bool menu_is_image_send_page(void)
 {
 	return (key != NULL && key->father == image_send_folder);
+}
+
+static bool menu_is_wireless_control_page(void)
+{
+	return (key != NULL && key->father == wireless_control_folder);
+}
+
+// i-BUS 约每 7ms 一帧；菜单按每 4 帧刷新一次，避免屏幕被高频更新占满。
+static bool menu_update_fs_a8s_values(void)
+{
+	uint32 valid_frame_count = fs_a8s_channel_data.valid_frame_count;
+
+	if((uint32)(valid_frame_count - fs_a8s_menu_frame_count) < 4U)
+	{
+		return false;
+	}
+
+	fs_a8s_menu_frame_count = valid_frame_count;
+	return true;
 }
 
 static bool menu_update_cargo_values(void)
@@ -252,20 +275,42 @@ void menu_init(void)
 	head.max_value = 0.0f;
 	head.step = 0.0f;
 
-	// CarGo：RunCmd=1 请求发车，RunCmd=0 停车；Protect 状态需先置 0 确认后才可重新发车。
+	// CarGo 下分为原有菜单控制和无线遥控控制两个目录。
 	cargo_folder = create_menu_folder_dynamic(&head, "CarGo");
 	if(cargo_folder != NULL)
 	{
-		create_menu_number_range_dynamic(cargo_folder, "RunCmd", (void *)&car_go_command, uint8_Box, 0.0f, 1.0f, 1.0f);
-		item = create_menu_number_dynamic(cargo_folder, "State", &cargo_state_menu_value, uint8_Box);
-		if(item != NULL)
+		base_control_folder = create_menu_folder_dynamic(cargo_folder, "Base_Control");
+		if(base_control_folder != NULL)
 		{
-			item->editable = false;
+			create_menu_number_range_dynamic(base_control_folder, "RunCmd", (void *)&car_go_command, uint8_Box, 0.0f, 1.0f, 1.0f);
+			item = create_menu_number_dynamic(base_control_folder, "State", &cargo_state_menu_value, uint8_Box);
+			if(item != NULL)
+			{
+				item->editable = false;
+			}
+			item = create_menu_number_dynamic(base_control_folder, "Fault", &cargo_fault_menu_value, uint8_Box);
+			if(item != NULL)
+			{
+				item->editable = false;
+			}
 		}
-		item = create_menu_number_dynamic(cargo_folder, "Fault", &cargo_fault_menu_value, uint8_Box);
-		if(item != NULL)
+
+		wireless_control_folder = create_menu_folder_dynamic(cargo_folder, "Wireless_Control");
+		if(wireless_control_folder != NULL)
 		{
-			item->editable = false;
+			create_menu_number_range_dynamic(wireless_control_folder, "Enable", (void *)&wireless_control_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
+			item = create_menu_number_dynamic(wireless_control_folder, "CH1", (void *)&fs_a8s_channel_data.channel[0], uint16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(wireless_control_folder, "CH2", (void *)&fs_a8s_channel_data.channel[1], uint16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(wireless_control_folder, "CH3", (void *)&fs_a8s_channel_data.channel[2], uint16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(wireless_control_folder, "CH4", (void *)&fs_a8s_channel_data.channel[3], uint16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(wireless_control_folder, "CH5_SWB", (void *)&fs_a8s_channel_data.channel[4], uint16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(wireless_control_folder, "CH6_SWC", (void *)&fs_a8s_channel_data.channel[5], uint16_Box);
+			if(item != NULL) item->editable = false;
 		}
 	}
 
@@ -726,6 +771,7 @@ void menu_show(void)
 	bool check_value_changed;
 	bool cargo_value_changed;
 	bool image_send_status_changed;
+	bool fs_a8s_value_changed;
 
 	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
 	latest_fps = image_get_capture_fps();
@@ -741,6 +787,7 @@ void menu_show(void)
 	check_value_changed = menu_update_check_values();
 	cargo_value_changed = menu_update_cargo_values();
 	image_send_status_changed = menu_update_image_send_status();
+	fs_a8s_value_changed = menu_update_fs_a8s_values();
 
 	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
 	if(menu_is_image_preview())
@@ -754,8 +801,9 @@ void menu_show(void)
 	{
 		//Check页面的名称和光标不变时，仅覆盖数值，避免周期刷新时全屏清除。
 		if((menu_is_check_page() && check_value_changed)
-			|| (menu_is_cargo_page() && cargo_value_changed)
-			|| (menu_is_image_send_page() && image_send_status_changed))
+			|| (menu_is_base_control_page() && cargo_value_changed)
+			|| (menu_is_image_send_page() && image_send_status_changed)
+			|| (menu_is_wireless_control_page() && fs_a8s_value_changed))
 		{
 			ips200_set_font(IPS200_8X16_FONT);
 			show_number();
