@@ -74,11 +74,15 @@ int main(void)
 		car_state_command_task();
 		menu_show();								//仅在内容变化时才真正刷新
 		
+		
+		wireless_uart_printf("%.2f\n", filtered_yaw_rate);
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING)
 		{
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			
+			
 		}
 		
 

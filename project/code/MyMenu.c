@@ -39,6 +39,7 @@ static uint8 image_send_action_menu_value = 0;
 static int16 check_encoder1_menu_value = 0;
 static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
+static float check_yaw_rate_menu_value = 0.0f;
 static float check_pitch_menu_value = 0.0f;
 static float check_roll_menu_value = 0.0f;
 static uint32 fs_a8s_menu_frame_count = 0U;
@@ -181,6 +182,7 @@ static bool menu_update_check_values(void)
 	int16 encoder1_value = encoder1;
 	int16 encoder2_value = encoder2;
 	float yaw_value = yaw;
+	float yaw_rate_value = filtered_yaw_rate;
 	float pitch_value = pitch;
 	float roll_value = roll;
 	bool changed = false;
@@ -198,6 +200,11 @@ static bool menu_update_check_values(void)
 	if(check_yaw_menu_value != yaw_value)
 	{
 		check_yaw_menu_value = yaw_value;
+		changed = true;
+	}
+	if(check_yaw_rate_menu_value != yaw_rate_value)
+	{
+		check_yaw_rate_menu_value = yaw_rate_value;
 		changed = true;
 	}
 	if(check_pitch_menu_value != pitch_value)
@@ -255,6 +262,7 @@ void menu_init(void)
 	Menu_Item *process_folder;
 	Menu_Item *pid_folder;
 	Menu_Item *servo_pid_folder;
+	Menu_Item *yaw_rate_pid_folder;
 	Menu_Item *item;
 
 	menu_pool_reset();
@@ -340,17 +348,43 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
 	}
 
-	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。
+	// 图像外环参数。KpNow 与 RateTar 是图像环的实时输出，仅用于观察。
 	pid_folder = create_menu_folder_dynamic(&head, "PID");
 	servo_pid_folder = create_menu_folder_dynamic(pid_folder, "servo_pid");
 	if(servo_pid_folder != NULL)
 	{
 		create_menu_number_range_dynamic(servo_pid_folder, "KpMin", &servo_pid.KpMin, float_Box, 0.0f, 3.0f, 0.01f);
-		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 3.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
-		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
-		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "RateMax", &servo_pid.OutMax, float_Box, 1.0f, 360.0f, 1.0f);
 		item = create_menu_number_dynamic(servo_pid_folder, "KpNow", &servo_pid.KpNow, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(servo_pid_folder, "RateTar", &yaw_rate_pid.Target, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+	}
+
+	// 横摆角速度内环参数。RateNow 与 RateOut 用于判断实际横摆和舵机修正是否匹配。
+	yaw_rate_pid_folder = create_menu_folder_dynamic(pid_folder, "yaw_rate_pid");
+	if(yaw_rate_pid_folder != NULL)
+	{
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "Kp", &yaw_rate_pid.Kp, float_Box, 0.0f, 3.0f, 0.01f);
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "Ki", &yaw_rate_pid.Ki, float_Box, 0.0f, 1.0f, 0.01f);
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "Kd", &yaw_rate_pid.Kd, float_Box, 0.0f, 1.0f, 0.01f);
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "GyroBias", &yaw_rate_pid.GyroBias, float_Box, -10.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "RateFilt", &yaw_rate_pid.FilterAlpha, float_Box, 0.0f, 1.0f, 0.01f);
+		create_menu_number_range_dynamic(yaw_rate_pid_folder, "RateDb", &yaw_rate_pid.Deadband, float_Box, 0.0f, 10.0f, 0.01f);
+		item = create_menu_number_dynamic(yaw_rate_pid_folder, "RateNow", &yaw_rate_pid.Actual, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(yaw_rate_pid_folder, "RateOut", &yaw_rate_pid.Out, float_Box);
 		if(item != NULL)
 		{
 			item->editable = false;
@@ -365,6 +399,11 @@ void menu_init(void)
 		item->editable = false;
 	}
 	item = create_menu_number_dynamic(check_folder, "Yaw", &check_yaw_menu_value, float_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
+	item = create_menu_number_dynamic(check_folder, "YawRate", &check_yaw_rate_menu_value, float_Box);
 	if(item != NULL)
 	{
 		item->editable = false;

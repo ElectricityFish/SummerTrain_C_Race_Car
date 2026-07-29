@@ -22,8 +22,10 @@ typedef struct
 extern KalmanFilter KF;			//Pitch滤波器
 extern KalmanFilter KF_Roll;	//Roll滤波器
 
-//这三个变量在TIM6中断内更新，主循环菜单读取时需要使用volatile。
+//这些姿态量在TIM6中断内更新，主循环菜单读取时需要使用volatile。
 extern volatile float yaw;
+extern volatile float yaw_rate;               // 绕 Z 轴原始角速度，单位：°/s
+extern volatile float filtered_yaw_rate;      // 零偏、低通与死区处理后的横摆角速度，单位：°/s
 extern volatile float pitch;
 extern volatile float roll;
 extern float pitch_raw;		//未减安装偏置的Pitch，用于静止标定

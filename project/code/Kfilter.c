@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include "MPU6050.h"
+#include "PID.h"
 #include "Promopt.h"
 
 #define KFILTER_Q_ANGLE		(0.001f)
@@ -14,6 +15,8 @@ KalmanFilter KF;
 KalmanFilter KF_Roll;
 
 volatile float yaw = 0.0f;
+volatile float yaw_rate = 0.0f;
+volatile float filtered_yaw_rate = 0.0f;
 volatile float pitch = 0.0f;
 volatile float roll = 0.0f;
 float pitch_raw = 0.0f;
@@ -22,7 +25,26 @@ float Offset = 0.0f;
 float RollOffset = 0.0f;
 
 static float gyro_yaw = 0.0f;
+static float yaw_rate_filter_state = 0.0f;
 static bool kfilter_first_update = true;
+
+static float kfilter_clampf(float value, float min_value, float max_value)
+{
+	if(value < min_value)
+	{
+		return min_value;
+	}
+	if(value > max_value)
+	{
+		return max_value;
+	}
+	return value;
+}
+
+static float kfilter_absf(float value)
+{
+	return (value >= 0.0f) ? value : -value;
+}
 
 //初始化一个卡尔曼滤波器的状态和噪声参数。
 void Kalman_Init(KalmanFilter *kf, float Q_angle, float Q_bias, float R_measure)
@@ -154,11 +176,14 @@ void kfilter_init(void)
 	Kalman_Init(&KF, KFILTER_Q_ANGLE, KFILTER_Q_BIAS, KFILTER_R_MEASURE);
 	Kalman_Init(&KF_Roll, KFILTER_Q_ANGLE, KFILTER_Q_BIAS, KFILTER_R_MEASURE);
 	yaw = 0.0f;
+	yaw_rate = 0.0f;
+	filtered_yaw_rate = 0.0f;
 	pitch = 0.0f;
 	roll = 0.0f;
 	pitch_raw = 0.0f;
 	roll_raw = 0.0f;
 	gyro_yaw = 0.0f;
+	yaw_rate_filter_state = 0.0f;
 	Offset = 0.0f;
 	RollOffset = 0.0f;
 	kfilter_first_update = true;
@@ -178,7 +203,6 @@ void Get_Angle(void)
 	int16 az;
 	int16 gx;
 	int16 gy;
-	int16 gz;
 
 	mpu6050_get_data();
 
@@ -187,7 +211,6 @@ void Get_Angle(void)
 	az = kfilter_raw_quantize(mpu6050_accel_z);
 	gx = kfilter_raw_quantize(mpu6050_gyro_x_data);
 	gy = kfilter_raw_quantize(mpu6050_gyro_y_data);
-	gz = kfilter_raw_quantize(mpu6050_gyro_z_data);
 
 	//首次用加速度计角度初始化，避免滤波器从0度缓慢收敛。
 	if(kfilter_first_update)
@@ -197,7 +220,24 @@ void Get_Angle(void)
 		kfilter_first_update = false;
 	}
 
-	gyro_yaw += mpu6050_gyro_transition(gz) * KFILTER_SAMPLE_DT;
+	// 原始横摆角速度直接使用未量化的 Z 轴陀螺仪数据，单位为 °/s。
+	// 不使用原先 100 LSB 的简易量化，避免角速度环反馈分辨率过低。
+	yaw_rate = mpu6050_gyro_transition(mpu6050_gyro_z_data);
+
+	// 横摆角速度预处理集中在此处：先扣除静态零偏，再进行一阶低通，最后施加死区。
+	// yaw_rate 始终保留原始值；filtered_yaw_rate 是供控制、菜单和无线串口观察的反馈值。
+	yaw_rate_filter_state += kfilter_clampf(yaw_rate_pid.FilterAlpha, 0.0f, 1.0f)
+		* ((yaw_rate - yaw_rate_pid.GyroBias) - yaw_rate_filter_state);
+	if(kfilter_absf(yaw_rate_filter_state) < yaw_rate_pid.Deadband)
+	{
+		filtered_yaw_rate = 0.0f;
+	}
+	else
+	{
+		filtered_yaw_rate = yaw_rate_filter_state;
+	}
+
+	gyro_yaw += yaw_rate * KFILTER_SAMPLE_DT;
 	yaw = gyro_yaw;
 
 	pitch_raw = calculatePitchAngle((float)ax, (float)ay, (float)az, (float)gy, KFILTER_SAMPLE_DT, &KF);

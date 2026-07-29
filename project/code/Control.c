@@ -12,7 +12,6 @@ volatile uint8 car_go_command;
 volatile uint8 car_protection_reason;
 volatile uint8 wireless_control_enabled;
 
-Servo_PID_t servo_pid;
 volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
@@ -202,17 +201,13 @@ static void car_state_enter_protect(uint8 reason)
 
 static void servo_control_reset_pid(void)
 {
-	servo_pid.Actual = 0.0f;
-	servo_pid.Out = 0.0f;
-	servo_pid.Error0 = 0.0f;
-	servo_pid.Error1 = 0.0f;
-	servo_pid.ErrorInt = 0.0f;
-	servo_pid.KpNow = servo_pid.KpMin;
+	servo_pid_reset();
+	yaw_rate_pid_reset();
 }
 
 void control_init(void)
 {
-    memset(&servo_pid, 0, sizeof(servo_pid));
+    PID_init();
 
     common_state = COMMON_STATE_IDLE;
     car_go_command = 0U;
@@ -221,16 +216,8 @@ void control_init(void)
     wireless_control_enabled_last = 0U;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
 
-    // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
+    // 图像外环的 Target/Actual 单位为图像列坐标，Out 为目标横摆角速度（°/s）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.KpMin = 0.30f;
-    servo_pid.KpMax = 0.85f;
-    servo_pid.ErrorFull = 35.0f;
-    servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 0.65f;
-    // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
-    servo_pid.OutMax = 55.0f;
-    servo_pid.OutMin = -55.0f;
 
     servo_control_reset_pid();
     servo_control_enabled = true;
@@ -322,14 +309,18 @@ void servo_control(void)
         return;
     }
 
-    // servo_pid_up_date 内部使用 Error = Target - Actual，并按 |Error| 动态计算 KpNow。
-    // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
+    // 图像外环使用 Error = Target - Actual，左转为正，输出目标横摆角速度（°/s）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
     servo_pid.Actual = (float)image_process_get_final_mid();
     servo_pid_up_date(&servo_pid);
 
-    // PID 输出是相对中位的角度修正量；底层接口需要以 90 度为中位的绝对逻辑角度。
+	// 横摆角速度内环直接读取 Kfilter 中处理后的反馈值；左转为正、右转为负。
+	yaw_rate_pid.Target = servo_pid.Out;
+	yaw_rate_pid.Actual = filtered_yaw_rate;
+	yaw_rate_pid_up_date(&yaw_rate_pid);
+
+    // 角速度内环输出是相对中位的舵机修正量；底层接口完成安装行程裁剪。
     control_angle = SERVOMOTOR_CONTROL_CENTER_ANGLE
-        + SERVO_CONTROL_DIRECTION * servo_pid.Out;
+        + SERVO_CONTROL_DIRECTION * yaw_rate_pid.Out;
     servomotor_set_angle(control_angle);
 }

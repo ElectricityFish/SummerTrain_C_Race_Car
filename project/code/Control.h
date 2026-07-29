@@ -31,7 +31,6 @@ extern volatile uint8 wireless_control_enabled;   // Wireless_Control/Enable：0
 // 1.0f：图像中线右移时输出右转；若实车方向相反，改为 -1.0f。
 #define SERVO_CONTROL_DIRECTION                (1.0f)
 
-extern Servo_PID_t servo_pid;
 extern volatile bool servo_control_enabled;
 
 // 初始化视觉舵机 PID；应在摄像头、图像处理和舵机底层初始化完成后调用。
@@ -53,7 +52,7 @@ void car_protection_check_attitude(void);
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);
 
-// 每 10 ms 调用一次：图像中线 -> PID 相对角度 -> 舵机逻辑角度 -> PWM。
+// 每 20 ms 调用一次：图像外环 -> 目标横摆角速度 -> 角速度内环 -> 舵机逻辑角度 -> PWM。
 void servo_control(void);
 
 #endif
