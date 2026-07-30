@@ -41,6 +41,9 @@ static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
 static float check_pitch_menu_value = 0.0f;
 static float check_roll_menu_value = 0.0f;
+static uint8 check_track_mode_menu_value = IMAGE_TRACK_MODE_BOTH;
+static uint8 check_left_edge_menu_value = 0U;
+static uint8 check_right_edge_menu_value = 0U;
 static uint32 fs_a8s_menu_frame_count = 0U;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
@@ -180,9 +183,12 @@ static bool menu_update_check_values(void)
 {
 	int16 encoder1_value = encoder1;
 	int16 encoder2_value = encoder2;
-	float yaw_value = yaw;
-	float pitch_value = pitch;
-	float roll_value = roll;
+    float yaw_value = yaw;
+    float pitch_value = pitch;
+    float roll_value = roll;
+    uint8 track_mode_value = image_process_track_mode;
+    uint8 left_edge_value = image_process_left_edge_ok;
+    uint8 right_edge_value = image_process_right_edge_ok;
 	bool changed = false;
 
 	if(check_encoder1_menu_value != encoder1_value)
@@ -205,11 +211,26 @@ static bool menu_update_check_values(void)
 		check_pitch_menu_value = pitch_value;
 		changed = true;
 	}
-	if(check_roll_menu_value != roll_value)
-	{
-		check_roll_menu_value = roll_value;
-		changed = true;
-	}
+    if(check_roll_menu_value != roll_value)
+    {
+        check_roll_menu_value = roll_value;
+        changed = true;
+    }
+    if(check_track_mode_menu_value != track_mode_value)
+    {
+        check_track_mode_menu_value = track_mode_value;
+        changed = true;
+    }
+    if(check_left_edge_menu_value != left_edge_value)
+    {
+        check_left_edge_menu_value = left_edge_value;
+        changed = true;
+    }
+    if(check_right_edge_menu_value != right_edge_value)
+    {
+        check_right_edge_menu_value = right_edge_value;
+        changed = true;
+    }
 	return changed;
 }
 
@@ -345,8 +366,8 @@ void menu_init(void)
 	servo_pid_folder = create_menu_folder_dynamic(pid_folder, "servo_pid");
 	if(servo_pid_folder != NULL)
 	{
-		create_menu_number_range_dynamic(servo_pid_folder, "KpMin", &servo_pid.KpMin, float_Box, 0.0f, 3.0f, 0.01f);
-		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 3.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "KpMin", &servo_pid.KpMin, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
@@ -379,11 +400,26 @@ void menu_init(void)
 	{
 		item->editable = false;
 	}
-	item = create_menu_number_dynamic(check_folder, "Encoder2", &check_encoder2_menu_value, int16_Box);
-	if(item != NULL)
-	{
-		item->editable = false;
-	}
+    item = create_menu_number_dynamic(check_folder, "Encoder2", &check_encoder2_menu_value, int16_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "TrackMode", &check_track_mode_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "LeftEdge", &check_left_edge_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "RightEdge", &check_right_edge_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
 	// 图传页面：Status 为只读状态，send_O/send_P/send_B 分别发送原图、处理图、两图。
 	image_send_status_menu_value = wireless_image_send_status;
 	image_send_folder = create_menu_folder_dynamic(check_folder, "send_img");

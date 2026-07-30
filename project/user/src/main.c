@@ -77,8 +77,8 @@ int main(void)
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
-			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
+			servo_pid.Target,servo_pid.Error0,servo_pid.Out);
 		}
 		
 
@@ -142,7 +142,7 @@ void TIM8_1ms_PIT(void)
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(2000,2000);
+			motor_set_duty(2150,2150);
 			servo_control();
 		}
 		else if(common_state == COMMON_STATE_PLAY)

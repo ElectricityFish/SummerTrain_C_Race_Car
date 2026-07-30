@@ -223,11 +223,11 @@ void control_init(void)
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.KpMin = 0.30f;
-    servo_pid.KpMax = 0.85f;
+    servo_pid.KpMin = 0.2f;
+    servo_pid.KpMax = 0.95f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 0.65f;
+    servo_pid.Kd = 1.0f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
     servo_pid.OutMax = 55.0f;
     servo_pid.OutMin = -55.0f;

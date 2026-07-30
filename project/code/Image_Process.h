@@ -27,6 +27,16 @@ extern uint16 image_left_edge[MT9V03X_H];
 extern uint16 image_right_edge[MT9V03X_H];
 extern uint8 image_mid_line[MT9V03X_H];
 
+// 当前中线生成模式。单边模式用于某一侧边线在特殊元素中短暂丢失时维持循线。
+#define IMAGE_TRACK_MODE_BOTH          (0U)
+#define IMAGE_TRACK_MODE_FOLLOW_LEFT   (1U)
+#define IMAGE_TRACK_MODE_FOLLOW_RIGHT  (2U)
+
+// 供菜单观察的边线可靠性与中线模式：1 表示该边线在当前控制权重区域内可靠。
+extern uint8 image_process_track_mode;
+extern uint8 image_process_left_edge_ok;
+extern uint8 image_process_right_edge_ok;
+
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
 
