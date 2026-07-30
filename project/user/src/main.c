@@ -57,8 +57,6 @@ int main(void)
 	menu_show();									//显示初始菜单
 	
 	//初始化完成
-	
-	
 	while(1)
 	{
 		
@@ -74,16 +72,14 @@ int main(void)
 		car_state_command_task();
 		menu_show();								//仅在内容变化时才真正刷新
 		
-		
-		wireless_uart_printf("%.2f\n", filtered_yaw_rate);
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
-			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
-			
-			
+			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f,%2.f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
+			servo_pid.Target,servo_pid.Error0,
+			yaw_rate_pid.Actual,yaw_rate_pid.Error0,yaw_rate_pid.Target,yaw_rate_pid.Out);			
 		}
+		
 		
 
 	}
@@ -146,7 +142,7 @@ void TIM8_1ms_PIT(void)
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(2000,2000);
+			motor_set_duty(3000,3000);
 			servo_control();
 		}
 		else if(common_state == COMMON_STATE_PLAY)

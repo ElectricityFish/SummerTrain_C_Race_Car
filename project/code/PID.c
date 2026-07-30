@@ -59,15 +59,15 @@ void PID_init(void)
 	memset(&yaw_rate_pid, 0, sizeof(yaw_rate_pid));
 
 	// 图像外环：图像误差（像素）转换为目标横摆角速度（°/s）。
-	servo_pid.KpMin = 1.50f;
-	servo_pid.KpMax = 3.00f;
+	servo_pid.KpMin = 1.5f;
+	servo_pid.KpMax = 5.00f;
 	servo_pid.ErrorFull = 35.0f;
-	servo_pid.OutMax = 120.0f;
-	servo_pid.OutMin = -120.0f;
+	servo_pid.OutMax = 300.0f;
+	servo_pid.OutMin = -300.0f;
 	servo_pid.KpNow = servo_pid.KpMin;
 
 	// 横摆角速度内环：初始仅使用 P，避免在尚未验证方向时引入积分或加速度噪声。
-	yaw_rate_pid.Kp = 0.18f;
+	yaw_rate_pid.Kp = 0.24f;
 	yaw_rate_pid.Ki = 0.0f;
 	yaw_rate_pid.Kd = 0.0f;
 	// 静止采样中心约为 +0.24 °/s，左转为正、右转为负。

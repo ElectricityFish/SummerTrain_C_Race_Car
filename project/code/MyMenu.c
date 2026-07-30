@@ -356,7 +356,7 @@ void menu_init(void)
 		create_menu_number_range_dynamic(servo_pid_folder, "KpMin", &servo_pid.KpMin, float_Box, 0.0f, 3.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "KpMax", &servo_pid.KpMax, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
-		create_menu_number_range_dynamic(servo_pid_folder, "RateMax", &servo_pid.OutMax, float_Box, 1.0f, 360.0f, 1.0f);
+		create_menu_number_range_dynamic(servo_pid_folder, "RateMax", &servo_pid.OutMax, float_Box, 1.0f, 1000.0f, 1.0f);
 		item = create_menu_number_dynamic(servo_pid_folder, "KpNow", &servo_pid.KpNow, float_Box);
 		if(item != NULL)
 		{
