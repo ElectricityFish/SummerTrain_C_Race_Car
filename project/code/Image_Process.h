@@ -18,6 +18,7 @@ typedef struct
     uint8 weight_span;             // 加权区域半宽，单位：行
     uint8 weight_peak;             // 加权区域中心的最大权重
     uint8 mid_filter_current;      // 最终中线中当前帧占比，范围 0~100
+    uint8 single_edge_target_bias; // 普通单边循线时的目标列补偿，范围 0~10 像素
 } Image_Process_Config;
 
 extern Image_Process_Config image_process_config;
@@ -32,10 +33,23 @@ extern uint8 image_mid_line[MT9V03X_H];
 #define IMAGE_TRACK_MODE_FOLLOW_LEFT   (1U)
 #define IMAGE_TRACK_MODE_FOLLOW_RIGHT  (2U)
 
+// 十字圆环状态。CROSS_FOLLOW 表示正在绕环，CROSS_EXIT 表示已识别出环十字标志后的过渡帧。
+#define IMAGE_CROSS_STATE_NORMAL        (0U)
+#define IMAGE_CROSS_STATE_FOLLOW        (1U)
+#define IMAGE_CROSS_STATE_EXIT          (2U)
+
+// 圆环方向。右转环在当前相机安装下以左侧稳定边为主跟随；左转使用镜像的右侧稳定边。
+#define IMAGE_CROSS_DIRECTION_NONE      (0U)
+#define IMAGE_CROSS_DIRECTION_LEFT      (1U)
+#define IMAGE_CROSS_DIRECTION_RIGHT     (2U)
+
 // 供菜单观察的边线可靠性与中线模式：1 表示该边线在当前控制权重区域内可靠。
 extern uint8 image_process_track_mode;
 extern uint8 image_process_left_edge_ok;
 extern uint8 image_process_right_edge_ok;
+extern uint8 image_process_cross_state;
+extern uint8 image_process_cross_direction;
+extern uint8 image_process_cross_feature;
 
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);

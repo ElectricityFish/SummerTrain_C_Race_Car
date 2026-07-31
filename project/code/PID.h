@@ -39,6 +39,9 @@ typedef struct {
 	float ErrorFull;
 	float Ki;
 	float Kd;
+	float Kd2;            // 偏航角速度阻尼增益，单位为舵机角度/(°/s)
+	float YawRateDps;     // 当前去零偏、低通后的偏航角速度，单位 °/s
+	float Kd2Out;         // Kd2 对舵机输出的贡献，便于菜单观察
 
 	float Error0;
 	float Error1;

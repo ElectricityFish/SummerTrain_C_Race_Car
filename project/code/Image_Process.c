@@ -8,6 +8,16 @@
 #define IMAGE_PROCESS_TRACK_LOSS_FRAMES (3U)
 #define IMAGE_PROCESS_TRACK_RECOVER_FRAMES (5U)
 
+// 右转十字圆环原图标定：s1、s5 在 42~57 行双边同时存在，
+// 而 64~80 行两边均消失。该组合在 s0、s1.5~s4 中均未出现。
+#define IMAGE_CROSS_TOP_ROW_BEGIN          (42U)
+#define IMAGE_CROSS_TOP_ROW_END            (57U)
+#define IMAGE_CROSS_BOTTOM_ROW_BEGIN       (64U)
+#define IMAGE_CROSS_BOTTOM_ROW_END         (80U)
+#define IMAGE_CROSS_TOP_BOTH_MIN_ROWS      (14U)
+#define IMAGE_CROSS_BOTTOM_LOST_MIN_ROWS   (14U)
+#define IMAGE_CROSS_EXIT_HOLD_FRAMES       (3U)
+
 Image_Process_Config image_process_config;
 
 uint16 image_left_edge[MT9V03X_H];
@@ -16,6 +26,9 @@ uint8 image_mid_line[MT9V03X_H];
 uint8 image_process_track_mode;
 uint8 image_process_left_edge_ok;
 uint8 image_process_right_edge_ok;
+uint8 image_process_cross_state;
+uint8 image_process_cross_direction;
+uint8 image_process_cross_feature;
 
 static uint8 image_reference_col;
 static uint8 image_reference_gray;
@@ -46,6 +59,8 @@ static const uint8 image_lane_half_width[MT9V03X_H] =
 static uint8 image_left_lost_frames;
 static uint8 image_right_lost_frames;
 static uint8 image_both_recovered_frames;
+static uint8 image_cross_exit_frames;
+static bool image_cross_seen_inside;
 
 static uint8 image_process_limit_u8(int32 value, uint8 lower, uint8 upper)
 {
@@ -174,7 +189,7 @@ static void image_process_set_track_mode(uint8 mode)
     image_both_recovered_frames = 0U;
 }
 
-// 第一版仅在单侧连续失效时做兜底切换；圆环入口、出口的专用状态机后续再建立。
+// 普通赛道的单边丢失兜底。十字圆环激活时由专用状态机强制指定模式，不会调用本函数。
 static void image_process_update_track_mode(void)
 {
     if(image_process_track_mode == IMAGE_TRACK_MODE_BOTH)
@@ -235,6 +250,103 @@ static void image_process_update_track_mode(void)
         {
             image_process_set_track_mode(IMAGE_TRACK_MODE_FOLLOW_LEFT);
         }
+    }
+}
+
+static bool image_process_detect_cross_feature(void)
+{
+    uint16 row;
+    uint8 top_both_count = 0U;
+    uint8 bottom_lost_count = 0U;
+
+    for(row = IMAGE_CROSS_TOP_ROW_BEGIN; row <= IMAGE_CROSS_TOP_ROW_END; row++)
+    {
+        if(image_process_row_has_both_edges(row))
+        {
+            top_both_count++;
+        }
+    }
+    for(row = IMAGE_CROSS_BOTTOM_ROW_BEGIN; row <= IMAGE_CROSS_BOTTOM_ROW_END; row++)
+    {
+        if(!image_process_left_edge_is_valid(image_left_edge[row])
+            && !image_process_right_edge_is_valid(image_right_edge[row]))
+        {
+            bottom_lost_count++;
+        }
+    }
+
+    return (top_both_count >= IMAGE_CROSS_TOP_BOTH_MIN_ROWS)
+        && (bottom_lost_count >= IMAGE_CROSS_BOTTOM_LOST_MIN_ROWS);
+}
+
+static uint8 image_process_get_cross_entry_direction(void)
+{
+    // 右转 s1 原图的参考列为 108，大于图像中心；左转镜像后会落在中心左侧。
+    return (image_reference_col >= MT9V03X_W / 2U)
+        ? IMAGE_CROSS_DIRECTION_RIGHT : IMAGE_CROSS_DIRECTION_LEFT;
+}
+
+static void image_process_force_cross_track_mode(void)
+{
+    // 原图重放表明：右转环 s2~s3 由左边线稳定覆盖；左转先按镜像使用右边线。
+    if(image_process_cross_direction == IMAGE_CROSS_DIRECTION_RIGHT)
+    {
+        image_process_set_track_mode(IMAGE_TRACK_MODE_FOLLOW_LEFT);
+    }
+    else
+    {
+        image_process_set_track_mode(IMAGE_TRACK_MODE_FOLLOW_RIGHT);
+    }
+}
+
+static void image_process_update_cross_state(void)
+{
+    bool cross_feature = image_process_detect_cross_feature();
+
+    image_process_cross_feature = cross_feature ? 1U : 0U;
+
+    if(image_process_cross_state == IMAGE_CROSS_STATE_NORMAL)
+    {
+        if(cross_feature)
+        {
+            image_process_cross_direction = image_process_get_cross_entry_direction();
+            image_process_cross_state = IMAGE_CROSS_STATE_FOLLOW;
+            image_cross_seen_inside = false;
+            image_cross_exit_frames = 0U;
+            image_process_force_cross_track_mode();
+        }
+        else
+        {
+            image_process_update_track_mode();
+        }
+        return;
+    }
+
+    if(image_process_cross_state == IMAGE_CROSS_STATE_FOLLOW)
+    {
+        image_process_force_cross_track_mode();
+
+        // s1 是短暂入口标志，必须先看见至少一帧环内画面，之后的下一次十字标志才是 s5 出环。
+        if(!cross_feature)
+        {
+            image_cross_seen_inside = true;
+        }
+        else if(image_cross_seen_inside)
+        {
+            image_process_cross_state = IMAGE_CROSS_STATE_EXIT;
+            image_cross_exit_frames = 0U;
+        }
+        return;
+    }
+
+    // 出环十字标志后的短暂过渡继续沿环内稳定边，避免 s5 当帧将假边线平均进中线。
+    image_process_force_cross_track_mode();
+    image_cross_exit_frames++;
+    if(image_cross_exit_frames >= IMAGE_CROSS_EXIT_HOLD_FRAMES)
+    {
+        image_process_cross_state = IMAGE_CROSS_STATE_NORMAL;
+        image_process_cross_direction = IMAGE_CROSS_DIRECTION_NONE;
+        image_process_set_track_mode(IMAGE_TRACK_MODE_BOTH);
     }
 }
 
@@ -509,6 +621,7 @@ void image_process_init(void)
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
+    image_process_config.single_edge_target_bias = 8U;
 
     memset(image_left_edge, 0, sizeof(image_left_edge));
     memset(image_right_edge, 0, sizeof(image_right_edge));
@@ -519,9 +632,14 @@ void image_process_init(void)
     image_process_track_mode = IMAGE_TRACK_MODE_BOTH;
     image_process_left_edge_ok = 0U;
     image_process_right_edge_ok = 0U;
+    image_process_cross_state = IMAGE_CROSS_STATE_NORMAL;
+    image_process_cross_direction = IMAGE_CROSS_DIRECTION_NONE;
+    image_process_cross_feature = 0U;
     image_left_lost_frames = 0U;
     image_right_lost_frames = 0U;
     image_both_recovered_frames = 0U;
+    image_cross_exit_frames = 0U;
+    image_cross_seen_inside = false;
     image_reference_col = MT9V03X_W / 2U;
     image_reference_gray = 0U;
     image_white_min = 0U;
@@ -540,7 +658,7 @@ void image_process_frame(void)
     image_process_find_reference_col(image);
     image_process_track_edges(image);
     image_process_update_edge_reliability();
-    image_process_update_track_mode();
+    image_process_update_cross_state();
     image_process_calculate_mid();
     image_new_result = true;
 }
@@ -579,8 +697,13 @@ void image_process_display(void)
     ips200_show_string(80U, 176U, "R:");
     ips200_show_uint(96U, 176U, image_process_right_edge_ok, 1U);
     ips200_set_color(RGB565_WHITE, RGB565_BLACK);
-    ips200_show_string(0U, 192U, "R:RED B:BLUE G:MID");
-    ips200_show_string(0U, 208U, "M:MODE L/R:EDGE KEY4");
+    ips200_show_string(0U, 192U, "C:");
+    ips200_show_uint(16U, 192U, image_process_cross_state, 1U);
+    ips200_show_string(40U, 192U, "D:");
+    ips200_show_uint(56U, 192U, image_process_cross_direction, 1U);
+    ips200_show_string(80U, 192U, "X:");
+    ips200_show_uint(96U, 192U, image_process_cross_feature, 1U);
+    ips200_show_string(0U, 208U, "R:RED B:BLUE G:MID");
 }
 
 bool image_process_take_new_result(void)

@@ -77,8 +77,8 @@ int main(void)
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
-			servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
+			servo_pid.Target,servo_pid.Error0,servo_pid.Out,servo_pid.Kd2Out);
 		}
 		
 

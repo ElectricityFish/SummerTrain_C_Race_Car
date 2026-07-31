@@ -41,9 +41,13 @@ static int16 check_encoder2_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
 static float check_pitch_menu_value = 0.0f;
 static float check_roll_menu_value = 0.0f;
+static float check_yaw_rate_menu_value = 0.0f;
 static uint8 check_track_mode_menu_value = IMAGE_TRACK_MODE_BOTH;
 static uint8 check_left_edge_menu_value = 0U;
 static uint8 check_right_edge_menu_value = 0U;
+static uint8 check_cross_state_menu_value = IMAGE_CROSS_STATE_NORMAL;
+static uint8 check_cross_direction_menu_value = IMAGE_CROSS_DIRECTION_NONE;
+static uint8 check_cross_feature_menu_value = 0U;
 static uint32 fs_a8s_menu_frame_count = 0U;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
@@ -186,9 +190,13 @@ static bool menu_update_check_values(void)
     float yaw_value = yaw;
     float pitch_value = pitch;
     float roll_value = roll;
+    float yaw_rate_value = yaw_rate_dps;
     uint8 track_mode_value = image_process_track_mode;
     uint8 left_edge_value = image_process_left_edge_ok;
     uint8 right_edge_value = image_process_right_edge_ok;
+    uint8 cross_state_value = image_process_cross_state;
+    uint8 cross_direction_value = image_process_cross_direction;
+    uint8 cross_feature_value = image_process_cross_feature;
 	bool changed = false;
 
 	if(check_encoder1_menu_value != encoder1_value)
@@ -216,6 +224,11 @@ static bool menu_update_check_values(void)
         check_roll_menu_value = roll_value;
         changed = true;
     }
+    if(check_yaw_rate_menu_value != yaw_rate_value)
+    {
+        check_yaw_rate_menu_value = yaw_rate_value;
+        changed = true;
+    }
     if(check_track_mode_menu_value != track_mode_value)
     {
         check_track_mode_menu_value = track_mode_value;
@@ -229,6 +242,21 @@ static bool menu_update_check_values(void)
     if(check_right_edge_menu_value != right_edge_value)
     {
         check_right_edge_menu_value = right_edge_value;
+        changed = true;
+    }
+    if(check_cross_state_menu_value != cross_state_value)
+    {
+        check_cross_state_menu_value = cross_state_value;
+        changed = true;
+    }
+    if(check_cross_direction_menu_value != cross_direction_value)
+    {
+        check_cross_direction_menu_value = cross_direction_value;
+        changed = true;
+    }
+    if(check_cross_feature_menu_value != cross_feature_value)
+    {
+        check_cross_feature_menu_value = cross_feature_value;
         changed = true;
     }
 	return changed;
@@ -359,6 +387,7 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "SingleBias", &image_process_config.single_edge_target_bias, uint8_Box, 0.0f, 10.0f, 1.0f);
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。
@@ -371,7 +400,13 @@ void menu_init(void)
 		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "kd2", &servo_pid.Kd2, float_Box, 0.0f, 2.0f, 0.01f);
 		item = create_menu_number_dynamic(servo_pid_folder, "KpNow", &servo_pid.KpNow, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(servo_pid_folder, "Kd2Out", &servo_pid.Kd2Out, float_Box);
 		if(item != NULL)
 		{
 			item->editable = false;
@@ -400,6 +435,11 @@ void menu_init(void)
 	{
 		item->editable = false;
 	}
+	item = create_menu_number_dynamic(check_folder, "YawRate", &check_yaw_rate_menu_value, float_Box);
+	if(item != NULL)
+	{
+		item->editable = false;
+	}
     item = create_menu_number_dynamic(check_folder, "Encoder2", &check_encoder2_menu_value, int16_Box);
     if(item != NULL)
     {
@@ -416,6 +456,21 @@ void menu_init(void)
         item->editable = false;
     }
     item = create_menu_number_dynamic(check_folder, "RightEdge", &check_right_edge_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "CrossState", &check_cross_state_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "CrossDir", &check_cross_direction_menu_value, uint8_Box);
+    if(item != NULL)
+    {
+        item->editable = false;
+    }
+    item = create_menu_number_dynamic(check_folder, "CrossFeat", &check_cross_feature_menu_value, uint8_Box);
     if(item != NULL)
     {
         item->editable = false;

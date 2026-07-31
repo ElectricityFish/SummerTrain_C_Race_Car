@@ -1,4 +1,5 @@
 #include "PID.h"
+#include "Kfilter.h"
 
 
 void PID_Update(PID_t *p)			// 一般PID函数
@@ -83,9 +84,14 @@ void servo_pid_up_date(Servo_PID_t *p)
 	}
 	p->ErrorInt = servo_pid_clampf(p->ErrorInt, p->OutMin / 2.0f, p->OutMax / 2.0f);
 
+	// 与学长 kd2 同型：实际偏航角速度越大，反向抵消越多，抑制左右摆动。
+	// yaw_rate_dps 已在 10ms 姿态任务中完成零偏标定与低通，不能再用 yaw 差分代替。
+	p->YawRateDps = yaw_rate_dps;
+	p->Kd2Out = -p->Kd2 * p->YawRateDps;
 	p->Out = p->KpNow * p->Error0
 		+ p->Ki * p->ErrorInt
-		+ p->Kd * (p->Error0 - p->Error1);
+		+ p->Kd * (p->Error0 - p->Error1)
+		+ p->Kd2Out;
 	p->Out = servo_pid_clampf(p->Out, p->OutMin, p->OutMax);
 }
 

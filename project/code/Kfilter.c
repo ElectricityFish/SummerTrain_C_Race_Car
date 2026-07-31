@@ -16,13 +16,19 @@ KalmanFilter KF_Roll;
 volatile float yaw = 0.0f;
 volatile float pitch = 0.0f;
 volatile float roll = 0.0f;
+volatile float yaw_rate_dps = 0.0f;
 float pitch_raw = 0.0f;
 float roll_raw = 0.0f;
 float Offset = 0.0f;
 float RollOffset = 0.0f;
 
 static float gyro_yaw = 0.0f;
+static float yaw_rate_bias_dps = 0.0f;
+static float yaw_rate_bias_sum = 0.0f;
+static uint16 yaw_rate_bias_count = 0U;
 static bool kfilter_first_update = true;
+
+#define KFILTER_YAW_RATE_FILTER_ALPHA (0.25f)
 
 //初始化一个卡尔曼滤波器的状态和噪声参数。
 void Kalman_Init(KalmanFilter *kf, float Q_angle, float Q_bias, float R_measure)
@@ -159,6 +165,10 @@ void kfilter_init(void)
 	pitch_raw = 0.0f;
 	roll_raw = 0.0f;
 	gyro_yaw = 0.0f;
+	yaw_rate_dps = 0.0f;
+	yaw_rate_bias_dps = 0.0f;
+	yaw_rate_bias_sum = 0.0f;
+	yaw_rate_bias_count = 0U;
 	Offset = 0.0f;
 	RollOffset = 0.0f;
 	kfilter_first_update = true;
@@ -178,7 +188,8 @@ void Get_Angle(void)
 	int16 az;
 	int16 gx;
 	int16 gy;
-	int16 gz;
+	float raw_yaw_rate_dps;
+	float corrected_yaw_rate_dps;
 
 	mpu6050_get_data();
 
@@ -187,7 +198,7 @@ void Get_Angle(void)
 	az = kfilter_raw_quantize(mpu6050_accel_z);
 	gx = kfilter_raw_quantize(mpu6050_gyro_x_data);
 	gy = kfilter_raw_quantize(mpu6050_gyro_y_data);
-	gz = kfilter_raw_quantize(mpu6050_gyro_z_data);
+	raw_yaw_rate_dps = mpu6050_gyro_transition(mpu6050_gyro_z_data);
 
 	//首次用加速度计角度初始化，避免滤波器从0度缓慢收敛。
 	if(kfilter_first_update)
@@ -197,7 +208,26 @@ void Get_Angle(void)
 		kfilter_first_update = false;
 	}
 
-	gyro_yaw += mpu6050_gyro_transition(gz) * KFILTER_SAMPLE_DT;
+	// 上电后首秒默认静止，平均 Z 轴零偏；标定期间不向舵机输出角速度阻尼。
+	if(yaw_rate_bias_count < KFILTER_YAW_RATE_CALIBRATION_COUNT)
+	{
+		yaw_rate_bias_sum += raw_yaw_rate_dps;
+		yaw_rate_bias_count++;
+		if(yaw_rate_bias_count == KFILTER_YAW_RATE_CALIBRATION_COUNT)
+		{
+			yaw_rate_bias_dps = yaw_rate_bias_sum / (float)KFILTER_YAW_RATE_CALIBRATION_COUNT;
+		}
+		yaw_rate_dps = 0.0f;
+		corrected_yaw_rate_dps = 0.0f;
+	}
+	else
+	{
+		corrected_yaw_rate_dps = raw_yaw_rate_dps - yaw_rate_bias_dps;
+		yaw_rate_dps += KFILTER_YAW_RATE_FILTER_ALPHA
+			* (corrected_yaw_rate_dps - yaw_rate_dps);
+	}
+
+	gyro_yaw += corrected_yaw_rate_dps * KFILTER_SAMPLE_DT;
 	yaw = gyro_yaw;
 
 	pitch_raw = calculatePitchAngle((float)ax, (float)ay, (float)az, (float)gy, KFILTER_SAMPLE_DT, &KF);

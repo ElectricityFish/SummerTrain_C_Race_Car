@@ -17,6 +17,7 @@ volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
 static uint8 wireless_control_enabled_last;
+static float servo_target_bias_now;
 
 #define WIRELESS_SWITCH_LOW_MAX             (1250U)
 #define WIRELESS_SWITCH_HIGH_MIN            (1750U)
@@ -29,10 +30,71 @@ static uint8 wireless_control_enabled_last;
 #define WIRELESS_STEER_LEFT_END             (1485U)
 #define WIRELESS_STEER_RIGHT_START          (1515U)
 #define WIRELESS_STEER_CHANNEL_MAX          (2000U)
+#define SERVO_CONTROL_SINGLE_BIAS_MAX       (10.0f)
+#define SERVO_CONTROL_TARGET_BIAS_STEP      (0.5f)
 
 static float control_absf(float value)
 {
     return (value >= 0.0f) ? value : -value;
+}
+
+static float control_limitf(float value, float lower, float upper)
+{
+    if(value < lower)
+    {
+        return lower;
+    }
+    if(value > upper)
+    {
+        return upper;
+    }
+    return value;
+}
+
+static float control_get_single_edge_target_bias(void)
+{
+    float bias = control_limitf((float)image_process_config.single_edge_target_bias,
+        0.0f, SERVO_CONTROL_SINGLE_BIAS_MAX);
+
+    // 十字圆环已由图像状态机指定跟随边和轨迹，普通弯道补偿不能叠加进去。
+    if(image_process_cross_state != IMAGE_CROSS_STATE_NORMAL)
+    {
+        return 0.0f;
+    }
+
+    // Target 增大对应更强左转、减小对应更强右转。
+    // 因此要向丢失边方向多转时，Target 的像素偏移方向与丢失边相反。
+    if((image_process_left_edge_ok != 0U) && (image_process_right_edge_ok == 0U))
+    {
+        return -bias;     // 右边丢失：跟左边，增加右转
+    }
+    if((image_process_left_edge_ok == 0U) && (image_process_right_edge_ok != 0U))
+    {
+        return bias;      // 左边丢失：跟右边，增加左转
+    }
+    return 0.0f;
+}
+
+static void control_update_target_bias(void)
+{
+    float target_bias = control_get_single_edge_target_bias();
+
+    if(servo_target_bias_now < target_bias)
+    {
+        servo_target_bias_now += SERVO_CONTROL_TARGET_BIAS_STEP;
+        if(servo_target_bias_now > target_bias)
+        {
+            servo_target_bias_now = target_bias;
+        }
+    }
+    else if(servo_target_bias_now > target_bias)
+    {
+        servo_target_bias_now -= SERVO_CONTROL_TARGET_BIAS_STEP;
+        if(servo_target_bias_now < target_bias)
+        {
+            servo_target_bias_now = target_bias;
+        }
+    }
 }
 
 static void car_state_stop_actuators(void)
@@ -202,7 +264,8 @@ static void car_state_enter_protect(uint8 reason)
 
 static void servo_control_reset_pid(void)
 {
-	servo_pid.Actual = 0.0f;
+    servo_target_bias_now = 0.0f;
+    servo_pid.Actual = 0.0f;
 	servo_pid.Out = 0.0f;
 	servo_pid.Error0 = 0.0f;
 	servo_pid.Error1 = 0.0f;
@@ -223,11 +286,14 @@ void control_init(void)
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.KpMin = 0.2f;
+    servo_pid.KpMin = 0.25f;
     servo_pid.KpMax = 0.95f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 1.0f;
+    servo_pid.Kd = 0.3f;
+    servo_pid.Kd2 = 0.01f;
+    servo_pid.YawRateDps = 0.0f;
+    servo_pid.Kd2Out = 0.0f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
     servo_pid.OutMax = 55.0f;
     servo_pid.OutMin = -55.0f;
@@ -324,7 +390,8 @@ void servo_control(void)
 
     // servo_pid_up_date 内部使用 Error = Target - Actual，并按 |Error| 动态计算 KpNow。
     // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
-    servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
+    control_update_target_bias();
+    servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET + servo_target_bias_now;
     servo_pid.Actual = (float)image_process_get_final_mid();
     servo_pid_up_date(&servo_pid);
 

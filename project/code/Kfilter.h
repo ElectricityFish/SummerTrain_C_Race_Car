@@ -18,6 +18,7 @@ typedef struct
 //Get_Angle()的调用周期，单位为秒。若实际调用周期改变，必须同步修改此宏。
 #define KFILTER_SAMPLE_DT			(0.01f)
 #define KFILTER_OFFSET_SAMPLE_COUNT	(100U)
+#define KFILTER_YAW_RATE_CALIBRATION_COUNT (100U)
 
 extern KalmanFilter KF;			//Pitch滤波器
 extern KalmanFilter KF_Roll;	//Roll滤波器
@@ -26,6 +27,7 @@ extern KalmanFilter KF_Roll;	//Roll滤波器
 extern volatile float yaw;
 extern volatile float pitch;
 extern volatile float roll;
+extern volatile float yaw_rate_dps;  // 去零偏、低通后的偏航角速度，单位 °/s
 extern float pitch_raw;		//未减安装偏置的Pitch，用于静止标定
 extern float roll_raw;		//未减安装偏置的Roll，用于静止标定
 extern float Offset;			//Pitch安装偏置
