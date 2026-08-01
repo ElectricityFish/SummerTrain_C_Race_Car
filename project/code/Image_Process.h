@@ -51,11 +51,18 @@ extern uint8 image_process_cross_state;
 extern uint8 image_process_cross_direction;
 extern uint8 image_process_cross_feature;
 
+// 每处理完成一帧递增一次；帧龄由 1 ms 定时任务累计，供控制和遥测判断图像是否过期。
+extern volatile uint32 image_process_frame_sequence;
+extern volatile uint16 image_process_frame_age_ms;
+
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
 
 // 处理 image_get_buffer() 指向的一帧灰度图。应在 image_take_new_frame() 返回 true 后调用。
 void image_process_frame(void);
+
+// 由 1 ms 定时任务调用，用于统计最近一次处理结果的帧龄。
+void image_process_1ms_task(void);
 
 // 在 IPS200 上显示灰度图，并叠加参考列、左右边线和中线。
 void image_process_display(void);

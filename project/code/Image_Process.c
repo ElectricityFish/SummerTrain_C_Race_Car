@@ -19,6 +19,8 @@
 #define IMAGE_CROSS_EXIT_HOLD_FRAMES       (3U)
 
 Image_Process_Config image_process_config;
+volatile uint32 image_process_frame_sequence = 0U;
+volatile uint16 image_process_frame_age_ms = 0U;
 
 uint16 image_left_edge[MT9V03X_H];
 uint16 image_right_edge[MT9V03X_H];
@@ -648,6 +650,16 @@ void image_process_init(void)
     image_last_final_mid = image_final_mid;
     image_has_last_mid = false;
     image_new_result = false;
+    image_process_frame_sequence = 0U;
+    image_process_frame_age_ms = 0U;
+}
+
+void image_process_1ms_task(void)
+{
+    if(image_process_frame_age_ms < 65535U)
+    {
+        image_process_frame_age_ms++;
+    }
 }
 
 void image_process_frame(void)
@@ -661,6 +673,8 @@ void image_process_frame(void)
     image_process_update_cross_state();
     image_process_calculate_mid();
     image_new_result = true;
+    image_process_frame_sequence++;
+    image_process_frame_age_ms = 0U;
 }
 
 void image_process_display(void)

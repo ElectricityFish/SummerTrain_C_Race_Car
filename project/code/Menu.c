@@ -1,6 +1,6 @@
 #include "Menu.h"
 
-#define Menu_Item_Max 64							//菜单项最大数量
+#define Menu_Item_Max 96							//菜单项最大数量
 
 static Menu_Item menu_item_array[Menu_Item_Max];	//创建菜单项对象(内存)池，最多Menu_Item_Max个菜单项
 static uint8_t menu_array_index=0;					//菜单项对象池的索引

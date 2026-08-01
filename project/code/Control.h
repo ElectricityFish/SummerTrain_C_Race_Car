@@ -41,6 +41,9 @@ void control_init(void);
 // Protect 只能在故障消失且状态请求为 IDLE 时退回 IDLE。
 void car_state_command_task(void);
 
+// 主循环调用。速度环调试激活时直接发送调试数据；不在中断内格式化或发送串口。
+void control_telemetry_task(void);
+
 // 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
 bool wireless_control_actuators_permitted(void);
 
@@ -53,7 +56,7 @@ void car_protection_check_attitude(void);
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);
 
-// 每 10 ms 调用一次：图像中线 -> PID 相对角度 -> 舵机逻辑角度 -> PWM。
+// 每处理完成一帧新图像后调用一次：图像中线 -> PID 相对角度 -> 舵机逻辑角度 -> PWM。
 void servo_control(void);
 
 #endif

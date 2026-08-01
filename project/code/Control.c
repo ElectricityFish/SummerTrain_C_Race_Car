@@ -5,6 +5,9 @@
 #include "Motor.h"
 #include "ServoMotor.h"
 #include "FS-A8S.h"
+#include "Encoder.h"
+#include "Wireless.h"
+#include "SpeedControl.h"
 
 
 volatile Common_State common_state;
@@ -99,6 +102,8 @@ static void control_update_target_bias(void)
 
 static void car_state_stop_actuators(void)
 {
+	// 离开独立调试流程时立即撤销速度环输出，避免状态切换后保留积分和 PWM。
+	speed_control_debug_stop();
     motor_set_duty(0, 0);
     servo_control_set_enabled(false);
     servomotor_disable();
@@ -121,6 +126,11 @@ static void car_state_apply(Common_State next_state)
     if(common_state == next_state)
     {
         return;
+    }
+
+    if(next_state != COMMON_STATE_IDLE)
+    {
+        speed_control_debug_stop();
     }
 
     common_state = next_state;
@@ -323,6 +333,18 @@ void car_state_command_task(void)
     }
 
     car_state_process_base_command();
+}
+
+void control_telemetry_task(void)
+{
+    if(!speed_control_debug_is_active())
+    {
+        return;
+    }
+
+    //wireless_uart_printf("%d,%d\n",(int)speed_left_pid.ActualPulse,(int)speed_left_pid.TargetPulse);
+
+	wireless_uart_printf("%d,%d\n",(int)speed_right_pid.ActualPulse,(int)speed_right_pid.TargetPulse);
 }
 
 void car_protection_check_attitude(void)

@@ -29,6 +29,9 @@
 //初始化舵机PWM，并让车轮转到上层定义的90度直行位置
 void servomotor_init(void);
 
+//最近一次经过机械边界限幅后实际下发的上层逻辑角度，供遥测使用。
+extern volatile float servomotor_control_angle_command;
+
 //控制车辆转向角度：
 //62.5度为向右最大，90度为直行，117.5度为向左最大，超出范围会自动限制
 void servomotor_set_angle(float angle);

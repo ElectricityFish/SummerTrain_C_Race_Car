@@ -6,6 +6,7 @@
 #include "Image_Process.h"
 #include "Control.h"
 #include "Encoder.h"
+#include "SpeedControl.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
@@ -33,6 +34,7 @@ int main(void)
 	servomotor_init();
 	motor_init();
 	encoder_init();
+	speed_control_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
@@ -61,26 +63,23 @@ int main(void)
 	
 	while(1)
 	{
-		
+		car_state_command_task();
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
 			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
 			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
+			// 转向 PID 只消费刚完成的一帧结果；两帧之间保持上一条舵机指令。
+			if(common_state == COMMON_STATE_RUNNING)
+			{
+				servo_control();
+			}
 			wireless_image_send_task();
 		}
-		
-		car_state_command_task();
+		// 无线发送在主循环执行，但由 TIM6 的 20 ms 节拍限频；不要在此处无限制 printf。
+		control_telemetry_task();					//无线串口调试信息发送函数
 		menu_show();								//仅在内容变化时才真正刷新
-		
-		//运行时进行无线调参
-		if(common_state == COMMON_STATE_RUNNING)
-		{
-			wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
-			servo_pid.Target,servo_pid.Error0,servo_pid.Out,servo_pid.Kd2Out);
-		}
-		
 
 	}
 }
@@ -104,6 +103,7 @@ void TIM6_1ms_PIT(void)
 	count1++;
 	count++;
 	image_fps_1ms_task();							//每1ms计时，按1秒窗口统计实际采集帧率
+	image_process_1ms_task();						//统计最近一帧图像处理结果的帧龄
 	fs_a8s_1ms_task();							//i-BUS 最后有效帧超时计时
 	promopt_tick();
 	if(count1>=10)									// 每10ms进行一次姿态解算
@@ -113,10 +113,11 @@ void TIM6_1ms_PIT(void)
 		count1=0;
 	}
 	
-	if(count>=5)									//每5ms进行一次编码器读取
+	if(count>=10)									//每10ms读取一次原始编码器增量并更新速度 PI
 	{
-		encoder1=encoder_1_get_pulse();
-		encoder2=encoder_2_get_pulse();
+		encoder_left_pulse = encoder_left_get_pulse();
+		encoder_right_pulse = encoder_right_get_pulse();
+		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
 		count=0;
 	}
 }
@@ -126,14 +127,25 @@ void TIM6_1ms_PIT(void)
 void TIM8_1ms_PIT(void)
 {
 	static uint8_t count=0;
+	int16 speed_debug_left_duty;
+	int16 speed_debug_right_duty;
 	count++;
 	
 	// 无线模式下 CH5 低位或 i-BUS 失联时，每 1ms 强制关闭执行器。
 	if(wireless_control_enabled && !wireless_control_actuators_permitted())
 	{
-		motor_set_duty(0, 0);
+		//motor_set_duty(0, 0);
 		servomotor_disable();
 		count = 0;
+		return;
+	}
+
+	// 独立速度环调试只允许在本地 IDLE 状态接管电机，绝不改写正式 RUNNING 的固定开环流程。
+	if((common_state == COMMON_STATE_IDLE) && (wireless_control_enabled == 0U))
+	{
+		speed_control_debug_get_duty(&speed_debug_left_duty, &speed_debug_right_duty);
+		motor_set_duty(speed_debug_left_duty, speed_debug_right_duty);
+		count = 0U;
 		return;
 	}
 
@@ -143,7 +155,6 @@ void TIM8_1ms_PIT(void)
 		if(common_state == COMMON_STATE_RUNNING)
 		{
 			motor_set_duty(2150,2150);
-			servo_control();
 		}
 		else if(common_state == COMMON_STATE_PLAY)
 		{
@@ -151,7 +162,7 @@ void TIM8_1ms_PIT(void)
 		}
 		else
 		{
-			motor_set_duty(0,0);
+			//motor_set_duty(0,0);
 			servomotor_disable();
 		}
 	}

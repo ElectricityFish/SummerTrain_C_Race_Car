@@ -1,5 +1,7 @@
 #include "ServoMotor.h"
 
+volatile float servomotor_control_angle_command = SERVOMOTOR_CONTROL_CENTER_ANGLE;
+
 //把角度换算成逐飞PWM库需要的万分比占空比
 static uint32 servomotor_angle_to_duty(float angle)
 {
@@ -56,6 +58,7 @@ static float servomotor_calibrate_angle(float control_angle)
 //舵机初始化：A15输出PWM，上层以90度作为统一的直行中值
 void servomotor_init(void)
 {
+	servomotor_control_angle_command = SERVOMOTOR_CONTROL_CENTER_ANGLE;
 	pwm_init(
 		SERVOMOTOR_PWM_PIN,
 		SERVOMOTOR_PWM_FREQ,
@@ -67,6 +70,7 @@ void servomotor_init(void)
 void servomotor_set_angle(float angle)
 {
 	float calibrated_angle = servomotor_calibrate_angle(angle);
+	servomotor_control_angle_command = calibrated_angle - SERVOMOTOR_ANGLE_OFFSET;
 
 	pwm_set_duty(
 		SERVOMOTOR_PWM_PIN,
