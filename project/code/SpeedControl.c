@@ -6,6 +6,8 @@
 #define SPEED_CONTROL_OUT_ABS_MAX           (3000)
 #define SPEED_CONTROL_INTEGRAL_ABS_MAX      (100000.0f)
 #define SPEED_CONTROL_MENU_GAIN_SCALE        (10.0f)
+#define SPEED_CONTROL_FORMAL_TARGET_MIN      (-220)
+#define SPEED_CONTROL_FORMAL_TARGET_MAX      (220)
 
 volatile Speed_PID_t speed_left_pid;
 volatile Speed_PID_t speed_right_pid;
@@ -14,6 +16,8 @@ volatile uint8 speed_debug_enabled;
 volatile uint8 speed_debug_run;
 volatile uint8 speed_debug_left_enabled;
 volatile uint8 speed_debug_right_enabled;
+
+static volatile uint8 speed_control_closed_loop_enabled;
 
 static float speed_control_limit_float(float value, float lower, float upper)
 {
@@ -48,6 +52,19 @@ static int16 speed_control_float_to_int16(float value)
         return (int16)(value + 0.5f);
     }
     return (int16)(value - 0.5f);
+}
+
+static int16 speed_control_limit_formal_target(int16 target)
+{
+    if(target < SPEED_CONTROL_FORMAL_TARGET_MIN)
+    {
+        return SPEED_CONTROL_FORMAL_TARGET_MIN;
+    }
+    if(target > SPEED_CONTROL_FORMAL_TARGET_MAX)
+    {
+        return SPEED_CONTROL_FORMAL_TARGET_MAX;
+    }
+    return target;
 }
 
 static void speed_control_reset_pid_output(volatile Speed_PID_t *pid)
@@ -129,6 +146,7 @@ void speed_control_init(void)
     speed_debug_run = 0U;
     speed_debug_left_enabled = 0U;
     speed_debug_right_enabled = 0U;
+    speed_control_closed_loop_enabled = 0U;
 }
 
 bool speed_control_debug_is_active(void)
@@ -138,10 +156,41 @@ bool speed_control_debug_is_active(void)
         && ((speed_debug_left_enabled != 0U) || (speed_debug_right_enabled != 0U));
 }
 
+void speed_control_reset_pid(void)
+{
+    speed_control_reset_pid_output(&speed_left_pid);
+    speed_control_reset_pid_output(&speed_right_pid);
+}
+
+void speed_control_set_closed_loop_enabled(bool enabled)
+{
+    // 无论启用还是停用，均从零积分开始，避免切换状态后产生 PWM 突跳。
+    speed_control_closed_loop_enabled = enabled ? 1U : 0U;
+    speed_control_reset_pid();
+}
+
+void speed_control_set_closed_loop_target(int16 left_target, int16 right_target)
+{
+    speed_left_pid.TargetPulse = speed_control_limit_formal_target(left_target);
+    speed_right_pid.TargetPulse = speed_control_limit_formal_target(right_target);
+}
+
+bool speed_control_closed_loop_is_active(void)
+{
+    return (speed_control_closed_loop_enabled != 0U);
+}
+
 void speed_control_10ms_task(int16 left_pulse, int16 right_pulse)
 {
     speed_left_pid.ActualPulse = left_pulse;
     speed_right_pid.ActualPulse = right_pulse;
+
+    if(speed_control_closed_loop_is_active())
+    {
+        speed_control_update_pid(&speed_left_pid);
+        speed_control_update_pid(&speed_right_pid);
+        return;
+    }
 
     if(!speed_control_debug_is_active())
     {
@@ -169,6 +218,24 @@ void speed_control_10ms_task(int16 left_pulse, int16 right_pulse)
     }
 }
 
+void speed_control_get_closed_loop_duty(int16 *left_duty, int16 *right_duty)
+{
+    if(left_duty == NULL || right_duty == NULL)
+    {
+        return;
+    }
+
+    if(!speed_control_closed_loop_is_active())
+    {
+        *left_duty = 0;
+        *right_duty = 0;
+        return;
+    }
+
+    *left_duty = speed_left_pid.Out;
+    *right_duty = speed_right_pid.Out;
+}
+
 void speed_control_debug_get_duty(int16 *left_duty, int16 *right_duty)
 {
     if(left_duty == NULL || right_duty == NULL)
@@ -190,6 +257,5 @@ void speed_control_debug_get_duty(int16 *left_duty, int16 *right_duty)
 void speed_control_debug_stop(void)
 {
     speed_debug_run = 0U;
-    speed_control_reset_pid_output(&speed_left_pid);
-    speed_control_reset_pid_output(&speed_right_pid);
+    speed_control_reset_pid();
 }

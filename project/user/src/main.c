@@ -7,6 +7,7 @@
 #include "Control.h"
 #include "Encoder.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
@@ -35,6 +36,7 @@ int main(void)
 	motor_init();
 	encoder_init();
 	speed_control_init();
+	speed_decision_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
@@ -77,8 +79,7 @@ int main(void)
 			}
 			wireless_image_send_task();
 		}
-		// 无线发送在主循环执行，但由 TIM6 的 20 ms 节拍限频；不要在此处无限制 printf。
-		control_telemetry_task();					//无线串口调试信息发送函数
+		control_telemetry_task();					// 无线串口调试信息在主循环发送
 		menu_show();								//仅在内容变化时才真正刷新
 
 	}
@@ -117,6 +118,7 @@ void TIM6_1ms_PIT(void)
 	{
 		encoder_left_pulse = encoder_left_get_pulse();
 		encoder_right_pulse = encoder_right_get_pulse();
+		speed_decision_10ms_task();
 		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
 		count=0;
 	}
@@ -127,26 +129,34 @@ void TIM6_1ms_PIT(void)
 void TIM8_1ms_PIT(void)
 {
 	static uint8_t count=0;
-	int16 speed_debug_left_duty;
-	int16 speed_debug_right_duty;
+	int16 speed_left_duty;
+	int16 speed_right_duty;
 	count++;
 	
-	// 无线模式下 CH5 低位或 i-BUS 失联时，每 1ms 强制关闭执行器。
-	if(wireless_control_enabled && !wireless_control_actuators_permitted())
+	// i-BUS 失联时，每 1ms 硬急停。CH5 低位由状态机进入闭环 Protect，
+	// 不能在这里把其覆盖为直接断电。
+	if(wireless_control_enabled && !wireless_control_link_online())
 	{
-		//motor_set_duty(0, 0);
+		motor_set_duty(0, 0);
 		servomotor_disable();
 		count = 0;
 		return;
 	}
 
-	// 独立速度环调试只允许在本地 IDLE 状态接管电机，绝不改写正式 RUNNING 的固定开环流程。
+	// 独立速度环调试只允许在本地 IDLE 状态接管电机。
 	if((common_state == COMMON_STATE_IDLE) && (wireless_control_enabled == 0U))
 	{
-		speed_control_debug_get_duty(&speed_debug_left_duty, &speed_debug_right_duty);
-		motor_set_duty(speed_debug_left_duty, speed_debug_right_duty);
+		speed_control_debug_get_duty(&speed_left_duty, &speed_right_duty);
+		motor_set_duty(speed_left_duty, speed_right_duty);
 		count = 0U;
 		return;
+	}
+
+	// RUNNING、PLAY 与 Protect 均由 10 ms 速度 PI 输出驱动；本中断只取最新 PWM。
+	if(speed_control_closed_loop_is_active())
+	{
+		speed_control_get_closed_loop_duty(&speed_left_duty, &speed_right_duty);
+		motor_set_duty(speed_left_duty, speed_right_duty);
 	}
 
 	if(count>=20)
@@ -154,7 +164,7 @@ void TIM8_1ms_PIT(void)
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(2150,2150);
+			// 电机 PWM 已由速度环在上方持续下发；图像帧到来时更新转向 PID。
 		}
 		else if(common_state == COMMON_STATE_PLAY)
 		{
@@ -162,7 +172,6 @@ void TIM8_1ms_PIT(void)
 		}
 		else
 		{
-			//motor_set_duty(0,0);
 			servomotor_disable();
 		}
 	}

@@ -85,7 +85,7 @@ void servo_pid_up_date(Servo_PID_t *p)
 	p->ErrorInt = servo_pid_clampf(p->ErrorInt, p->OutMin / 2.0f, p->OutMax / 2.0f);
 
 	// 与学长 kd2 同型：实际偏航角速度越大，反向抵消越多，抑制左右摆动。
-	// yaw_rate_dps 已在 10ms 姿态任务中完成零偏标定与低通，不能再用 yaw 差分代替。
+	// yaw_rate_dps 已在 10ms 姿态任务中完成零偏标定，直接使用实时角速度，不能再用 yaw 差分代替。
 	p->YawRateDps = yaw_rate_dps;
 	p->Kd2Out = -p->Kd2 * p->YawRateDps;
 	p->Out = p->KpNow * p->Error0

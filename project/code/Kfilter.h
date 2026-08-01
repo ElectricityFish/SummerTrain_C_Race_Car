@@ -27,7 +27,7 @@ extern KalmanFilter KF_Roll;	//Roll滤波器
 extern volatile float yaw;
 extern volatile float pitch;
 extern volatile float roll;
-extern volatile float yaw_rate_dps;  // 去零偏、低通后的偏航角速度，单位 °/s
+extern volatile float yaw_rate_dps;  // 去零偏、未低通的实时偏航角速度，单位 °/s
 extern float pitch_raw;		//未减安装偏置的Pitch，用于静止标定
 extern float roll_raw;		//未减安装偏置的Roll，用于静止标定
 extern float Offset;			//Pitch安装偏置

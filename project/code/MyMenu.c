@@ -7,6 +7,7 @@
 #include "Control.h"
 #include "Encoder.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 #include "Kfilter.h"
 #include "Wireless.h"
 #include "FS-A8S.h"
@@ -470,7 +471,7 @@ void menu_init(void)
 		}
 	}
 
-	// 独立速度环调试：仅在 IDLE + Enable + Run 下向电机输出，正式 RUNNING 仍保持原固定 PWM。
+	// 独立速度环调试：仅在 IDLE + Enable + Run 下向电机输出，不改写正式闭环流程。
 	speed_debug_folder = create_menu_folder_dynamic(&head, "Speed_Debug");
 	if(speed_debug_folder != NULL)
 	{
@@ -508,6 +509,14 @@ void menu_init(void)
 			item = create_menu_number_dynamic(speed_right_pid_folder, "Out", (void *)&speed_right_pid.Out, int16_Box);
 			if(item != NULL) item->editable = false;
 		}
+	}
+
+	// 正式闭环的阿克曼辅助差速。默认关闭，确认左右目标方向后再逐步提高 Gain。
+	item = create_menu_folder_dynamic(&head, "Ackermann");
+	if(item != NULL)
+	{
+		create_menu_number_range_dynamic(item, "Enable", (void *)&ackermann_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
+		create_menu_number_range_dynamic(item, "Gain", (void *)&ackermann_gain, float_Box, 0.0f, 1.20f, 0.05f);
 	}
 
 	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。

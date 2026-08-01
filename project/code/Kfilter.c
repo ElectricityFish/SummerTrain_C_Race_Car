@@ -28,8 +28,6 @@ static float yaw_rate_bias_sum = 0.0f;
 static uint16 yaw_rate_bias_count = 0U;
 static bool kfilter_first_update = true;
 
-#define KFILTER_YAW_RATE_FILTER_ALPHA (0.25f)
-
 //初始化一个卡尔曼滤波器的状态和噪声参数。
 void Kalman_Init(KalmanFilter *kf, float Q_angle, float Q_bias, float R_measure)
 {
@@ -223,8 +221,8 @@ void Get_Angle(void)
 	else
 	{
 		corrected_yaw_rate_dps = raw_yaw_rate_dps - yaw_rate_bias_dps;
-		yaw_rate_dps += KFILTER_YAW_RATE_FILTER_ALPHA
-			* (corrected_yaw_rate_dps - yaw_rate_dps);
+		// 偏航角速度直接使用去零偏后的本次原始测量，不再进行一阶低通。
+		yaw_rate_dps = corrected_yaw_rate_dps;
 	}
 
 	gyro_yaw += corrected_yaw_rate_dps * KFILTER_SAMPLE_DT;

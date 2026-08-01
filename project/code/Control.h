@@ -15,6 +15,7 @@ typedef enum
 // 保护原因可以组合并锁存，供菜单显示和故障定位使用。
 #define CAR_PROTECTION_REASON_NONE       (0U)
 #define CAR_PROTECTION_REASON_ATTITUDE   (1U << 0)
+#define CAR_PROTECTION_REASON_WIRELESS_CH5_LOW  (1U << 1)
 
 #define CAR_PROTECTION_ANGLE_LIMIT_DEG       (50.0f)
 
@@ -44,10 +45,14 @@ void car_state_command_task(void);
 // 主循环调用。速度环调试激活时直接发送调试数据；不在中断内格式化或发送串口。
 void control_telemetry_task(void);
 
-// 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
+// 无线总使能、i-BUS 在线且 CH5 高位时，才允许 PLAY 执行器动作。
 bool wireless_control_actuators_permitted(void);
 
-// PLAY 状态下按 CH1/CH3 刷新舵机和双电机输出；由 20ms 执行器任务调用。
+// 无线总使能下 i-BUS 是否仍在线。失联时供 1 ms 执行器任务作最高优先级硬急停；
+// CH5 低位是受控 Protect，不应走这里的硬急停。
+bool wireless_control_link_online(void);
+
+// PLAY 状态下按 CH1/CH3 刷新舵机和左右速度目标；由 20ms 执行器任务调用。
 void wireless_control_play_task(void);
 
 // 在姿态解算完成后调用；RUNNING 与 PLAY 状态命中条件时进入 Protect。

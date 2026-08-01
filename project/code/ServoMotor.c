@@ -40,7 +40,7 @@ static uint32 servomotor_angle_to_duty(float angle)
 }
 
 //把上层逻辑角度限制在实车安全范围内，再加上7.5度机械安装偏移
-//对应关系：62.5 -> 实际70度，90 -> 实际97.5度，117.5 -> 实际125度
+//对应关系：65 -> 实际72.5度，90 -> 实际97.5度，115 -> 实际122.5度
 static float servomotor_calibrate_angle(float control_angle)
 {
 	if(control_angle < SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE)

@@ -19,12 +19,12 @@
 #define SERVOMOTOR_MID_ANGLE           (90.0f)
 #define SERVOMOTOR_MAX_ANGLE           (180.0f)
 
-//实车标定结果：实际输入70度为右极限，97.5度为直行，125度为左极限
+//实车安全行程：实际输入72.5度为右极限，97.5度为直行，122.5度为左极限
 //为了让上层仍然以90度表示直行，驱动内部会自动给输入角度增加7.5度
 #define SERVOMOTOR_ANGLE_OFFSET                  (7.5f)
-#define SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE       (62.5f)
+#define SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE       (65.0f)
 #define SERVOMOTOR_CONTROL_CENTER_ANGLE          (90.0f)
-#define SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE        (117.5f)
+#define SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE        (115.0f)
 
 //初始化舵机PWM，并让车轮转到上层定义的90度直行位置
 void servomotor_init(void);
@@ -33,7 +33,7 @@ void servomotor_init(void);
 extern volatile float servomotor_control_angle_command;
 
 //控制车辆转向角度：
-//62.5度为向右最大，90度为直行，117.5度为向左最大，超出范围会自动限制
+//65度为向右最大，90度为直行，115度为向左最大，超出范围会自动限制
 void servomotor_set_angle(float angle);
 
 // 停止输出舵机控制脉冲，使舵机不再保持当前位置。

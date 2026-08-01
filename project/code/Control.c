@@ -8,6 +8,7 @@
 #include "Encoder.h"
 #include "Wireless.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 
 
 volatile Common_State common_state;
@@ -22,13 +23,15 @@ static uint8 car_protection_active_reason;
 static uint8 wireless_control_enabled_last;
 static float servo_target_bias_now;
 
+static void car_state_enter_protect(uint8 reason);
+
 #define WIRELESS_SWITCH_LOW_MAX             (1250U)
 #define WIRELESS_SWITCH_HIGH_MIN            (1750U)
 #define WIRELESS_MOTOR_CHANNEL_MIN          (1000U)
 #define WIRELESS_MOTOR_NEGATIVE_END         (1480U)
 #define WIRELESS_MOTOR_POSITIVE_START       (1520U)
 #define WIRELESS_MOTOR_CHANNEL_MAX          (2000U)
-#define WIRELESS_MOTOR_MAX_DUTY             (2500)
+#define WIRELESS_MOTOR_MAX_TARGET_PULSE      (220)
 #define WIRELESS_STEER_CHANNEL_MIN          (1000U)
 #define WIRELESS_STEER_LEFT_END             (1485U)
 #define WIRELESS_STEER_RIGHT_START          (1515U)
@@ -102,8 +105,10 @@ static void control_update_target_bias(void)
 
 static void car_state_stop_actuators(void)
 {
-	// 离开独立调试流程时立即撤销速度环输出，避免状态切换后保留积分和 PWM。
-	speed_control_debug_stop();
+    // 彻底停止时同时撤销正式环和独立调试环，避免保留积分和 PWM。
+    speed_control_set_closed_loop_enabled(false);
+    speed_decision_stop();
+    speed_control_debug_stop();
     motor_set_duty(0, 0);
     servo_control_set_enabled(false);
     servomotor_disable();
@@ -116,9 +121,13 @@ static bool wireless_control_ch5_permitted(void)
 
 bool wireless_control_actuators_permitted(void)
 {
-    return (wireless_control_enabled != 0U)
-        && fs_a8s_is_online()
+    return wireless_control_link_online()
         && wireless_control_ch5_permitted();
+}
+
+bool wireless_control_link_online(void)
+{
+    return (wireless_control_enabled != 0U) && fs_a8s_is_online();
 }
 
 static void car_state_apply(Common_State next_state)
@@ -128,15 +137,31 @@ static void car_state_apply(Common_State next_state)
         return;
     }
 
-    if(next_state != COMMON_STATE_IDLE)
-    {
-        speed_control_debug_stop();
-    }
-
+    // 状态切换是速度环积分的边界：先清除，再按新状态配置目标和启停。
+    speed_control_reset_pid();
     common_state = next_state;
     if(next_state == COMMON_STATE_RUNNING)
     {
+        speed_control_debug_stop();
+        speed_control_set_closed_loop_enabled(true);
+        speed_decision_set_base_target(SPEED_DECISION_RUNNING_BASE_TARGET_PULSE);
         servo_control_set_enabled(true);
+    }
+    else if(next_state == COMMON_STATE_PLAY)
+    {
+        speed_control_debug_stop();
+        speed_control_set_closed_loop_enabled(true);
+        speed_decision_set_base_target(0);
+        servo_control_set_enabled(false);
+    }
+    else if(next_state == COMMON_STATE_PROTECT)
+    {
+        speed_control_debug_stop();
+        // Protect 仍保持闭环：以 0 脉冲目标主动抑制滑行，不使用开环断电。
+        speed_control_set_closed_loop_enabled(true);
+        speed_decision_set_base_target(0);
+        servo_control_set_enabled(false);
+        servomotor_disable();
     }
     else
     {
@@ -167,20 +192,20 @@ static void car_state_process_base_command(void)
     }
 }
 
-static int16 wireless_control_get_motor_duty(uint16 channel_value)
+static int16 wireless_control_get_speed_target(uint16 channel_value)
 {
-    int32 duty;
+    int32 target;
 
     if(channel_value <= WIRELESS_MOTOR_CHANNEL_MIN)
     {
-        return -WIRELESS_MOTOR_MAX_DUTY;
+        return -WIRELESS_MOTOR_MAX_TARGET_PULSE;
     }
     if(channel_value < WIRELESS_MOTOR_NEGATIVE_END)
     {
-        duty = -((int32)(WIRELESS_MOTOR_NEGATIVE_END - channel_value)
-            * WIRELESS_MOTOR_MAX_DUTY
+        target = -((int32)(WIRELESS_MOTOR_NEGATIVE_END - channel_value)
+            * WIRELESS_MOTOR_MAX_TARGET_PULSE
             / (WIRELESS_MOTOR_NEGATIVE_END - WIRELESS_MOTOR_CHANNEL_MIN));
-        return (int16)duty;
+        return (int16)target;
     }
     if(channel_value <= WIRELESS_MOTOR_POSITIVE_START)
     {
@@ -188,12 +213,12 @@ static int16 wireless_control_get_motor_duty(uint16 channel_value)
     }
     if(channel_value < WIRELESS_MOTOR_CHANNEL_MAX)
     {
-        duty = (int32)(channel_value - WIRELESS_MOTOR_POSITIVE_START)
-            * WIRELESS_MOTOR_MAX_DUTY
+        target = (int32)(channel_value - WIRELESS_MOTOR_POSITIVE_START)
+            * WIRELESS_MOTOR_MAX_TARGET_PULSE
             / (WIRELESS_MOTOR_CHANNEL_MAX - WIRELESS_MOTOR_POSITIVE_START);
-        return (int16)duty;
+        return (int16)target;
     }
-    return WIRELESS_MOTOR_MAX_DUTY;
+    return WIRELESS_MOTOR_MAX_TARGET_PULSE;
 }
 
 static float wireless_control_get_steering_angle(uint16 channel_value)
@@ -229,7 +254,7 @@ static void wireless_control_process_state(void)
 {
     uint16 channel_6 = fs_a8s_channel_data.channel[5];
 
-    if(!wireless_control_actuators_permitted())
+    if(!wireless_control_link_online())
     {
         car_go_command = 0U;
         car_state_stop_actuators();
@@ -239,6 +264,16 @@ static void wireless_control_process_state(void)
         }
         return;
     }
+
+    if(!wireless_control_ch5_permitted())
+    {
+        car_go_command = 0U;
+        car_protection_active_reason |= CAR_PROTECTION_REASON_WIRELESS_CH5_LOW;
+        car_state_enter_protect(CAR_PROTECTION_REASON_WIRELESS_CH5_LOW);
+        return;
+    }
+
+    car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_WIRELESS_CH5_LOW;
 
     if(channel_6 <= WIRELESS_SWITCH_LOW_MAX)
     {
@@ -297,11 +332,11 @@ void control_init(void)
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
     servo_pid.KpMin = 0.25f;
-    servo_pid.KpMax = 0.95f;
+    servo_pid.KpMax = 1.05f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 0.3f;
-    servo_pid.Kd2 = 0.01f;
+    servo_pid.Kd = 0.0f;
+    servo_pid.Kd2 = 0.04f;
     servo_pid.YawRateDps = 0.0f;
     servo_pid.Kd2Out = 0.0f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
@@ -320,6 +355,12 @@ void car_state_command_task(void)
     {
         wireless_control_enabled_last = wireless_control_enabled;
         car_go_command = 0U;
+        if(wireless_control_enabled == 0U)
+        {
+            // CH5 低位仅在无线控制有效期间构成 Protect 原因；关闭无线后可由
+            // 本地 RunCmd=0 按正常 Protect 退出流程确认停车。
+            car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_WIRELESS_CH5_LOW;
+        }
         if(common_state != COMMON_STATE_PROTECT)
         {
             car_state_apply(COMMON_STATE_IDLE);
@@ -337,7 +378,7 @@ void car_state_command_task(void)
 
 void control_telemetry_task(void)
 {
-    if(!speed_control_debug_is_active())
+    if(!speed_control_debug_is_active() && !speed_control_closed_loop_is_active())
     {
         return;
     }
@@ -373,16 +414,16 @@ void car_protection_check_attitude(void)
 
 void wireless_control_play_task(void)
 {
-    int16 motor_duty;
+    int16 target_pulse;
 
     if((common_state != COMMON_STATE_PLAY) || !wireless_control_actuators_permitted())
     {
         return;
     }
 
-    motor_duty = wireless_control_get_motor_duty(fs_a8s_channel_data.channel[2]);
-    motor_set_duty(motor_duty, motor_duty);
     servomotor_set_angle(wireless_control_get_steering_angle(fs_a8s_channel_data.channel[0]));
+    target_pulse = wireless_control_get_speed_target(fs_a8s_channel_data.channel[2]);
+    speed_decision_set_base_target(target_pulse);
 }
 
 void servo_control_set_enabled(bool enabled)
