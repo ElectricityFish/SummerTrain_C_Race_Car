@@ -2,7 +2,10 @@
 
 static bool image_new_frame = false;
 static vuint16 image_dma_frame_count = 0;
+static vuint32 image_process_frame_total = 0;
+static uint32 image_process_frame_total_last = 0;
 static uint16 image_capture_fps = 0;
+static uint16 image_process_fps = 0;
 static uint16 image_fps_time_ms = 0;
 
 //初始化底层摄像头和DMA采集链路
@@ -10,7 +13,10 @@ uint8 image_init(void)
 {
 	image_new_frame = false;
 	image_dma_frame_count = 0;
+	image_process_frame_total = 0;
+	image_process_frame_total_last = 0;
 	image_capture_fps = 0;
+	image_process_fps = 0;
 	image_fps_time_ms = 0;
 	mt9v03x_finish_flag = 0;
 	return mt9v03x_init();
@@ -32,13 +38,23 @@ void image_dma_finish_handler(void)
 	image_dma_frame_count++;
 }
 
-//TIM6每1ms调用一次。每经过完整的1秒，将该秒内的DMA完成次数保存为采集帧率。
+//每完成一帧图像处理时调用，因此该计数就是主循环实际完成的处理帧数。
+void image_process_finish_handler(void)
+{
+	image_process_frame_total++;
+}
+
+//TIM6每1ms调用一次。每经过完整的1秒，同时保存该秒内的采集帧数和处理帧数。
 void image_fps_1ms_task(void)
 {
 	image_fps_time_ms++;
 	if(image_fps_time_ms >= 1000)
 	{
+		uint32 process_frame_total_now = image_process_frame_total;
+
 		image_capture_fps = image_dma_frame_count;
+		image_process_fps = (uint16)(process_frame_total_now - image_process_frame_total_last);
+		image_process_frame_total_last = process_frame_total_now;
 		image_dma_frame_count = 0;
 		image_fps_time_ms = 0;
 	}
@@ -48,6 +64,12 @@ void image_fps_1ms_task(void)
 uint16 image_get_capture_fps(void)
 {
 	return image_capture_fps;
+}
+
+//返回最近一个完整统计周期内的实际图像处理帧率，单位为帧/秒。
+uint16 image_get_process_fps(void)
+{
+	return image_process_fps;
 }
 
 //取走一帧新图像的通知。图像数据仍保存在底层全局缓冲区中。

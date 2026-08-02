@@ -12,11 +12,17 @@ void image_update(void);
 //由DMA1通道4完成中断调用，记录一次实际完成的图像采集。
 void image_dma_finish_handler(void);
 
-//由TIM6的1ms定时中断调用，每1000ms结算一次采集帧率。
+//每完成一帧图像处理后调用，记录一次实际完成的图像处理。
+void image_process_finish_handler(void);
+
+//由TIM6的1ms定时中断调用，每1000ms同时结算采集帧率和处理帧率。
 void image_fps_1ms_task(void);
 
 //获取最近一个完整1秒统计窗口内的实际图像采集帧率。
 uint16 image_get_capture_fps(void);
+
+//获取最近一个完整1秒统计窗口内的实际图像处理帧率。
+uint16 image_get_process_fps(void);
 
 //获取一帧未处理的新图像标志。调用后会清除该标志。
 bool image_take_new_frame(void);

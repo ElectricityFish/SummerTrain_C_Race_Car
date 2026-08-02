@@ -16,4 +16,6 @@ void key_enter(void);	//进入文件夹；数值项进入/退出编辑
 void key_quit(void);	//返回上一级；编辑状态下退出编辑
 void key_select(void);	//兼容原接口：切换数值项编辑状态
 
+extern uint16 image_fps_menu_value;
+
 #endif

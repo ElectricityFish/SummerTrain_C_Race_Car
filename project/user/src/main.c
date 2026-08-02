@@ -82,13 +82,14 @@ int main(void)
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
 			
-			wireless_uart_printf("%d,%d,%d,%d,%.0f,%.0f\n",
-			speed_left_pid.TargetPulse,
-			speed_left_pid.ActualPulse,
-			speed_right_pid.TargetPulse,
-			speed_right_pid.ActualPulse
-			);
+			//wireless_uart_printf("%d,%d,%d,%d,%.0f,%.0f\n",
+			//speed_left_pid.TargetPulse,
+			//speed_left_pid.ActualPulse,
+			//speed_right_pid.TargetPulse,
+			//speed_right_pid.ActualPulse
+			//);
 			
+			wireless_uart_printf("%d,%d\n", image_fps_menu_value, image_get_process_fps());
 			
 		}
 		
