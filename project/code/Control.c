@@ -9,6 +9,7 @@
 #include "Wireless.h"
 #include "SpeedControl.h"
 #include "SpeedDecision.h"
+#include "SpeedPlanner.h"
 
 
 volatile Common_State common_state;
@@ -106,8 +107,9 @@ static void control_update_target_bias(void)
 static void car_state_stop_actuators(void)
 {
     // 彻底停止时同时撤销正式环和独立调试环，避免保留积分和 PWM。
-    speed_control_set_closed_loop_enabled(false);
-    speed_decision_stop();
+	speed_control_set_closed_loop_enabled(false);
+	speed_planner_stop();
+	speed_decision_stop();
     speed_control_debug_stop();
     motor_set_duty(0, 0);
     servo_control_set_enabled(false);
@@ -142,24 +144,26 @@ static void car_state_apply(Common_State next_state)
     common_state = next_state;
     if(next_state == COMMON_STATE_RUNNING)
     {
-        speed_control_debug_stop();
-        speed_control_set_closed_loop_enabled(true);
-        speed_decision_set_base_target(SPEED_DECISION_RUNNING_BASE_TARGET_PULSE);
-        servo_control_set_enabled(true);
+		speed_control_debug_stop();
+		speed_control_set_closed_loop_enabled(true);
+		speed_planner_start();
+		servo_control_set_enabled(true);
     }
     else if(next_state == COMMON_STATE_PLAY)
     {
-        speed_control_debug_stop();
-        speed_control_set_closed_loop_enabled(true);
-        speed_decision_set_base_target(0);
+		speed_control_debug_stop();
+		speed_control_set_closed_loop_enabled(true);
+		speed_planner_stop();
+		speed_decision_set_base_target(0);
         servo_control_set_enabled(false);
     }
     else if(next_state == COMMON_STATE_PROTECT)
     {
-        speed_control_debug_stop();
-        // Protect 仍保持闭环：以 0 脉冲目标主动抑制滑行，不使用开环断电。
-        speed_control_set_closed_loop_enabled(true);
-        speed_decision_set_base_target(0);
+		speed_control_debug_stop();
+		// Protect 仍保持闭环：以 0 脉冲目标主动抑制滑行，不使用开环断电。
+		speed_control_set_closed_loop_enabled(true);
+		speed_planner_stop();
+		speed_decision_set_base_target(0);
         servo_control_set_enabled(false);
         servomotor_disable();
     }
@@ -331,12 +335,12 @@ void control_init(void)
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.KpMin = 0.6f;
-    servo_pid.KpMax = 0.6f;
+    servo_pid.KpMin = 0.2f;
+    servo_pid.KpMax = 0.5f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
     servo_pid.Kd = 0.0f;
-    servo_pid.Kd2 = 0.01f;
+    servo_pid.Kd2 = 0.02f;
     servo_pid.YawRateDps = 0.0f;
     servo_pid.Kd2Out = 0.0f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。

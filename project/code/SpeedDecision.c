@@ -156,7 +156,7 @@ static void speed_decision_apply_targets(void)
 void speed_decision_init(void)
 {
     ackermann_enabled = 1U;
-    ackermann_gain = 0.5f;
+    ackermann_gain = 0.0f;
     speed_decision_base_target_pulse = 0;
     ackermann_servo_delta_deg = 0.0f;
     ackermann_wheel_delta_deg = 0.0f;

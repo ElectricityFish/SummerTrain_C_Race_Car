@@ -490,6 +490,16 @@
               <FilePath>..\code\SpeedDecision.h</FilePath>
             </File>
             <File>
+              <FileName>SpeedPlanner.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\SpeedPlanner.c</FilePath>
+            </File>
+            <File>
+              <FileName>SpeedPlanner.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\SpeedPlanner.h</FilePath>
+            </File>
+            <File>
               <FileName>MPU6050.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\MPU6050.c</FilePath>

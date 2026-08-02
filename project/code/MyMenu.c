@@ -8,6 +8,7 @@
 #include "Encoder.h"
 #include "SpeedControl.h"
 #include "SpeedDecision.h"
+#include "SpeedPlanner.h"
 #include "Kfilter.h"
 #include "Wireless.h"
 #include "FS-A8S.h"
@@ -32,6 +33,7 @@ static Menu_Item *check_folder = NULL;
 static Menu_Item *speed_debug_folder = NULL;
 static Menu_Item *speed_left_pid_folder = NULL;
 static Menu_Item *speed_right_pid_folder = NULL;
+static Menu_Item *speed_planner_folder = NULL;
 static Menu_Item *image_send_folder = NULL;
 static Menu_Item *image_send_origin_item = NULL;
 static Menu_Item *image_send_processed_item = NULL;
@@ -60,6 +62,10 @@ static int16 speed_debug_last_left_out = 0;
 static int16 speed_debug_last_right_out = 0;
 static float speed_debug_last_left_error = 0.0f;
 static float speed_debug_last_right_error = 0.0f;
+static uint16 speed_planner_last_bend_px = 0U;
+static float speed_planner_last_curve = 0.0f;
+static int16 speed_planner_last_raw_target = 0;
+static int16 speed_planner_last_target = 0;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
 static bool menu_refresh_required = true;
@@ -156,6 +162,11 @@ static bool menu_is_speed_debug_page(void)
 			|| (key->father == speed_right_pid_folder));
 }
 
+static bool menu_is_speed_planner_page(void)
+{
+	return (key != NULL) && (key->father == speed_planner_folder);
+}
+
 // i-BUS 约每 7ms 一帧；菜单按每 4 帧刷新一次，避免屏幕被高频更新占满。
 static bool menu_update_fs_a8s_values(void)
 {
@@ -202,6 +213,34 @@ static bool menu_update_speed_debug_values(void)
 	if(speed_debug_last_right_error != speed_right_pid.Error)
 	{
 		speed_debug_last_right_error = speed_right_pid.Error;
+		changed = true;
+	}
+
+	return changed;
+}
+
+static bool menu_update_speed_planner_values(void)
+{
+	bool changed = false;
+
+	if(speed_planner_last_bend_px != speed_planner_bend_px)
+	{
+		speed_planner_last_bend_px = speed_planner_bend_px;
+		changed = true;
+	}
+	if(speed_planner_last_curve != speed_planner_curve)
+	{
+		speed_planner_last_curve = speed_planner_curve;
+		changed = true;
+	}
+	if(speed_planner_last_raw_target != speed_planner_raw_target_pulse)
+	{
+		speed_planner_last_raw_target = speed_planner_raw_target_pulse;
+		changed = true;
+	}
+	if(speed_planner_last_target != speed_planner_target_pulse)
+	{
+		speed_planner_last_target = speed_planner_target_pulse;
 		changed = true;
 	}
 
@@ -516,7 +555,32 @@ void menu_init(void)
 	if(item != NULL)
 	{
 		create_menu_number_range_dynamic(item, "Enable", (void *)&ackermann_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
-		create_menu_number_range_dynamic(item, "Gain", (void *)&ackermann_gain, float_Box, 0.0f, 1.20f, 0.05f);
+		create_menu_number_range_dynamic(item, "Gain", (void *)&ackermann_gain, float_Box, 0.0f, 3.20f, 0.05f);
+	}
+
+	// 第一阶段速度规划：直道与弯道连续降速，不改变已有的阿克曼差速与速度 PI。
+	speed_planner_folder = create_menu_folder_dynamic(&head, "Speed_Plan");
+	if(speed_planner_folder != NULL)
+	{
+		create_menu_number_range_dynamic(speed_planner_folder, "Enable", (void *)&speed_planner_config.enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "Start", (void *)&speed_planner_config.start_target, int16_Box, 0.0f, 220.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "Straight", (void *)&speed_planner_config.straight_target, int16_Box, 0.0f, 220.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "CurveMin", (void *)&speed_planner_config.curve_min_target, int16_Box, 0.0f, 220.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "Safe", (void *)&speed_planner_config.safe_target, int16_Box, 0.0f, 220.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "BendFull", (void *)&speed_planner_config.bend_full_px, float_Box, 1.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "SteerFull", (void *)&speed_planner_config.steer_full_deg, float_Box, 1.0f, 45.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "SteerW", (void *)&speed_planner_config.steer_weight, float_Box, 0.0f, 1.0f, 0.05f);
+		create_menu_number_range_dynamic(speed_planner_folder, "Filter", (void *)&speed_planner_config.curve_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "UpStep", (void *)&speed_planner_config.up_step_per_10ms, int16_Box, 1.0f, 20.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_planner_folder, "DownStep", (void *)&speed_planner_config.down_step_per_10ms, int16_Box, 1.0f, 20.0f, 1.0f);
+		item = create_menu_number_dynamic(speed_planner_folder, "BendPx", (void *)&speed_planner_bend_px, uint16_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_planner_folder, "Curve", (void *)&speed_planner_curve, float_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_planner_folder, "RawTarget", (void *)&speed_planner_raw_target_pulse, int16_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_planner_folder, "Target", (void *)&speed_planner_target_pulse, int16_Box);
+		if(item != NULL) item->editable = false;
 	}
 
 	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。
@@ -970,6 +1034,7 @@ void menu_show(void)
 	bool image_send_status_changed;
 	bool fs_a8s_value_changed;
 	bool speed_debug_value_changed;
+	bool speed_planner_value_changed;
 
 	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
 	latest_fps = image_get_capture_fps();
@@ -987,6 +1052,7 @@ void menu_show(void)
 	image_send_status_changed = menu_update_image_send_status();
 	fs_a8s_value_changed = menu_update_fs_a8s_values();
 	speed_debug_value_changed = menu_update_speed_debug_values();
+	speed_planner_value_changed = menu_update_speed_planner_values();
 
 	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
 	if(menu_is_image_preview())
@@ -1003,7 +1069,8 @@ void menu_show(void)
 			|| (menu_is_base_control_page() && cargo_value_changed)
 			|| (menu_is_image_send_page() && image_send_status_changed)
 			|| (menu_is_wireless_control_page() && fs_a8s_value_changed)
-			|| (menu_is_speed_debug_page() && speed_debug_value_changed))
+			|| (menu_is_speed_debug_page() && speed_debug_value_changed)
+			|| (menu_is_speed_planner_page() && speed_planner_value_changed))
 		{
 			ips200_set_font(IPS200_8X16_FONT);
 			show_number();

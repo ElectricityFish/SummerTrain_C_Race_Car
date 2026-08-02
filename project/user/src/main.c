@@ -8,6 +8,7 @@
 #include "Encoder.h"
 #include "SpeedControl.h"
 #include "SpeedDecision.h"
+#include "SpeedPlanner.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
@@ -37,6 +38,7 @@ int main(void)
 	encoder_init();
 	speed_control_init();
 	speed_decision_init();
+	speed_planner_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
@@ -77,6 +79,8 @@ int main(void)
 			{
 				servo_control();
 			}
+			// 视觉与本帧舵机指令均已更新后，再生成下一周期的基础速度目标。
+			speed_planner_update_from_image();
 			wireless_image_send_task();
 		}
 		control_telemetry_task();					// 无线串口调试信息在主循环发送
@@ -118,6 +122,7 @@ void TIM6_1ms_PIT(void)
 	{
 		encoder_left_pulse = encoder_left_get_pulse();
 		encoder_right_pulse = encoder_right_get_pulse();
+		speed_planner_10ms_task();
 		speed_decision_10ms_task();
 		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
 		count=0;
