@@ -79,6 +79,8 @@ int main(void)
 		{
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
+			
+			//wireless_uart_printf("%df,%d\n",encoder1,encoder2);
 		}
 		
 
