@@ -85,7 +85,9 @@ void servo_pid_up_date(Servo_PID_t *p)
 
 	p->Out = p->KpNow * p->Error0
 		+ p->Ki * p->ErrorInt
-		+ p->Kd * (p->Error0 - p->Error1);
+		+ p->Kd * (p->Error0 - p->Error1)
+		// 正角速度表示车身正在左转，施加负舵角（右转）以抑制横摆振荡。
+		- p->Kd2 * p->YawRate;
 	p->Out = servo_pid_clampf(p->Out, p->OutMin, p->OutMax);
 }
 

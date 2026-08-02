@@ -53,7 +53,7 @@ void car_protection_check_attitude(void);
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);
 
-// 每 10 ms 调用一次：图像中线 -> PID 相对角度 -> 舵机逻辑角度 -> PWM。
+// 当前每 20 ms 调用一次：图像中线与横摆角速度 -> 转向控制量 -> 舵机逻辑角度 -> PWM。
 void servo_control(void);
 
 #endif

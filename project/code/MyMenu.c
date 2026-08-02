@@ -350,7 +350,13 @@ void menu_init(void)
 		create_menu_number_range_dynamic(servo_pid_folder, "ErrFull", &servo_pid.ErrorFull, float_Box, 1.0f, 120.0f, 1.0f);
 		create_menu_number_range_dynamic(servo_pid_folder, "ki", &servo_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 		create_menu_number_range_dynamic(servo_pid_folder, "kd", &servo_pid.Kd, float_Box, 0.0f, 10.0f, 0.01f);
+		create_menu_number_range_dynamic(servo_pid_folder, "kd2", &servo_pid.Kd2, float_Box, 0.0f, 1.0f, 0.01f);
 		item = create_menu_number_dynamic(servo_pid_folder, "KpNow", &servo_pid.KpNow, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(servo_pid_folder, "YawRate", &servo_pid.YawRate, float_Box);
 		if(item != NULL)
 		{
 			item->editable = false;

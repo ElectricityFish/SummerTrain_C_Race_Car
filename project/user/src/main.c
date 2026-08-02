@@ -80,7 +80,7 @@ int main(void)
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
 			
-			//wireless_uart_printf("%df,%d\n",encoder1,encoder2);
+			wireless_uart_printf("%d,%d\n",encoder1,encoder2);
 		}
 		
 
@@ -115,7 +115,7 @@ void TIM6_1ms_PIT(void)
 		count1=0;
 	}
 	
-	if(count>=5)									//每5ms进行一次编码器读取
+	if(count>=10)									//每5ms进行一次编码器读取
 	{
 		encoder1=encoder_1_get_pulse();
 		encoder2=encoder_2_get_pulse();

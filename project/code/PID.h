@@ -27,7 +27,7 @@ typedef struct {
 void PID_Update(PID_t *p);
 
 // 舵机视觉控制专用 PID。KpNow 由误差大小动态计算，单位为“舵机角度/图像像素”。
-// 保留 Ki、Kd 及其状态，便于后续在此专用控制器上继续加入积分或微分。
+// Kd 对图像误差作差分，Kd2 对陀螺仪横摆角速度作阻尼反馈。
 typedef struct {
 	float Target;
 	float Actual;
@@ -39,6 +39,10 @@ typedef struct {
 	float ErrorFull;
 	float Ki;
 	float Kd;
+	// 横摆角速度阻尼系数；YawRate 单位为 deg/s，因此 Kd2 的量纲为 s。
+	float Kd2;
+	// X 轴陀螺仪直接换算得到的横摆角速度：左转为正，右转为负。
+	float YawRate;
 
 	float Error0;
 	float Error1;
