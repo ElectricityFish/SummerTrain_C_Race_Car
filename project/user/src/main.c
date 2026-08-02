@@ -23,6 +23,10 @@ int main(void)
 	pit_ms_init(TIM7_PIT, 5);						
 	pit_ms_init(TIM6_PIT, 1);
 	pit_ms_init(TIM8_PIT, 1);
+	// 数值越小优先级越高：控制/传感器定时器低于摄像头，按键扫描最低。
+	interrupt_set_priority(TIM6_IRQn, 3);
+	interrupt_set_priority(TIM8_UP_IRQn, 3);
+	interrupt_set_priority(TIM7_IRQn, 4);
 	
 	
 	//IPS200方向必须在初始化屏幕之前设置
@@ -53,6 +57,9 @@ int main(void)
 		ips200_show_string(0, 0, "MT9V03X INIT ERR");
 		system_delay_ms(500);
 	}
+	// image_init() 内部会设置摄像头优先级；成功后覆盖，确保DMA完成先于下一次VSYNC处理。
+	interrupt_set_priority(MT9V03X_DMA_IRQN, 0);
+	interrupt_set_priority(MT9V03X_VSYNC_IRQN, 1);
 	image_process_init();
 	control_init();
 	menu_init();
@@ -89,7 +96,9 @@ int main(void)
 			//speed_right_pid.ActualPulse
 			//);
 			
-			wireless_uart_printf("%d,%d\n", image_fps_menu_value, image_get_process_fps());
+			wireless_uart_printf("%d,%d\n",
+				image_get_vsync_max_gap_ms(),
+				image_get_capture_max_gap_ms());
 			
 		}
 		

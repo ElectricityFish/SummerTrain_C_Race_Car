@@ -409,6 +409,7 @@ void EXTI9_5_IRQHandler (void)
     }
     if(EXTI->PR & (0x00000001 << 6))                                            // 检测 line6 是否触发
     {
+		image_vsync_event_handler();                                                 // 记录摄像头帧同步间隔
         camera_vsync_handler();
         // 此处编写用户代码 (A6/B6..G6) 引脚触发
 
