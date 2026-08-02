@@ -6,6 +6,7 @@
 #include "Image_Process.h"
 #include "Control.h"
 #include "Encoder.h"
+#include "SpeedControl.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
@@ -33,6 +34,7 @@ int main(void)
 	servomotor_init();
 	motor_init();
 	encoder_init();
+	speed_control_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
@@ -80,7 +82,14 @@ int main(void)
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
 			
-			wireless_uart_printf("%d,%d\n",encoder1,encoder2);
+			wireless_uart_printf("%d,%d,%d,%d,%.0f,%.0f\n",
+			speed_left_pid.TargetPulse,
+			speed_left_pid.ActualPulse,
+			speed_right_pid.TargetPulse,
+			speed_right_pid.ActualPulse
+			);
+			
+			
 		}
 		
 
@@ -115,10 +124,24 @@ void TIM6_1ms_PIT(void)
 		count1=0;
 	}
 	
-	if(count>=10)									//每5ms进行一次编码器读取
+	if(count>=10)									//每10ms读取编码器并更新左右速度 PI
 	{
-		encoder1=encoder_1_get_pulse();
-		encoder2=encoder_2_get_pulse();
+		encoder_left_pulse = encoder_left_get_pulse();
+		encoder_right_pulse = encoder_right_get_pulse();
+		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
+		{
+			speed_control_set_closed_loop_target(
+				speed_running_target_pulse,
+				speed_running_target_pulse);
+		}
+		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))
+			&& speed_control_closed_loop_is_active()
+			&& !speed_control_debug_is_active())
+		{
+			// 单轮调试结束后也会在下一个 10 ms 周期恢复零速保持目标。
+			speed_control_set_closed_loop_target(0, 0);
+		}
+		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
 		count=0;
 	}
 }
@@ -128,6 +151,8 @@ void TIM6_1ms_PIT(void)
 void TIM8_1ms_PIT(void)
 {
 	static uint8_t count=0;
+	int16 speed_left_duty;
+	int16 speed_right_duty;
 	count++;
 	
 	// 无线模式下 CH5 低位或 i-BUS 失联时，每 1ms 强制关闭执行器。
@@ -139,12 +164,32 @@ void TIM8_1ms_PIT(void)
 		return;
 	}
 
+	// 本地 IDLE 下允许菜单单独调试左右轮；状态切换会自动撤销调试输出。
+	if((common_state == COMMON_STATE_IDLE)
+		&& (wireless_control_enabled == 0U)
+		&& speed_control_debug_is_active())
+	{
+		speed_control_debug_get_duty(&speed_left_duty, &speed_right_duty);
+		motor_set_duty(speed_left_duty, speed_right_duty);
+		count = 0U;
+		return;
+	}
+
+	// 速度 PI 每 10 ms 更新一次；此处持续下发最近一次左右轮输出。
+	if(((common_state == COMMON_STATE_RUNNING)
+		|| (common_state == COMMON_STATE_IDLE)
+		|| (common_state == COMMON_STATE_PROTECT))
+		&& speed_control_closed_loop_is_active())
+	{
+		speed_control_get_closed_loop_duty(&speed_left_duty, &speed_right_duty);
+		motor_set_duty(speed_left_duty, speed_right_duty);
+	}
+
 	if(count>=20)
 	{
 		count=0;
 		if(common_state == COMMON_STATE_RUNNING)
 		{
-			motor_set_duty(2000,2000);
 			servo_control();
 		}
 		else if(common_state == COMMON_STATE_PLAY)
@@ -153,7 +198,10 @@ void TIM8_1ms_PIT(void)
 		}
 		else
 		{
-			motor_set_duty(0,0);
+			if(!speed_control_closed_loop_is_active())
+			{
+				motor_set_duty(0,0);
+			}
 			servomotor_disable();
 		}
 	}

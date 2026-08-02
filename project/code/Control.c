@@ -4,6 +4,7 @@
 #include "Kfilter.h"
 #include "MPU6050.h"
 #include "Motor.h"
+#include "SpeedControl.h"
 #include "ServoMotor.h"
 #include "FS-A8S.h"
 
@@ -38,9 +39,22 @@ static float control_absf(float value)
 
 static void car_state_stop_actuators(void)
 {
+	speed_control_set_closed_loop_enabled(false);
+	speed_control_debug_stop();
     motor_set_duty(0, 0);
     servo_control_set_enabled(false);
     servomotor_disable();
+}
+
+static void car_state_hold_zero_speed(void)
+{
+	// IDLE/PROTECT 保持速度环工作，以零目标主动抑制车轮转动。
+	speed_control_debug_stop();
+	speed_control_set_closed_loop_target(0, 0);
+	speed_control_set_closed_loop_enabled(true);
+	motor_set_duty(0, 0);
+	servo_control_set_enabled(false);
+	servomotor_disable();
 }
 
 static bool wireless_control_ch5_permitted(void)
@@ -65,7 +79,16 @@ static void car_state_apply(Common_State next_state)
     common_state = next_state;
     if(next_state == COMMON_STATE_RUNNING)
     {
+		speed_control_debug_stop();
+		speed_control_set_closed_loop_target(
+			speed_running_target_pulse,
+			speed_running_target_pulse);
+		speed_control_set_closed_loop_enabled(true);
         servo_control_set_enabled(true);
+    }
+    else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
+    {
+		car_state_hold_zero_speed();
     }
     else
     {
@@ -241,7 +264,7 @@ void control_init(void)
     servo_control_reset_pid();
     servo_control_enabled = true;
     servomotor_set_angle(SERVOMOTOR_CONTROL_CENTER_ANGLE);
-    car_state_stop_actuators();
+    car_state_hold_zero_speed();
 }
 
 void car_state_command_task(void)

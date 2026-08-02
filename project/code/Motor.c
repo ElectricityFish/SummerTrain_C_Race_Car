@@ -6,6 +6,9 @@ static uint8 motor_reverse_level(uint8 positive_level)
 	return (positive_level == GPIO_HIGH) ? GPIO_LOW : GPIO_HIGH;
 }
 
+volatile int16 motor_left_duty_command = 0;
+volatile int16 motor_right_duty_command = 0;
+
 //设置单路电机：符号控制方向，绝对值控制PWM占空比
 static void motor_set_single(
 	int16 duty,
@@ -50,26 +53,29 @@ static void motor_set_single(
 void motor_init(void)
 {
 	//方向引脚使用普通推挽输出，低电平作为初始方向
-	gpio_init(MOTOR1_DIR_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);
-	gpio_init(MOTOR2_DIR_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);
+	gpio_init(MOTOR_RIGHT_DIR_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);
+	gpio_init(MOTOR_LEFT_DIR_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);
 
 	//A1和A3同属TIM5，频率必须一致，初始化时PWM占空比为0
-	pwm_init(MOTOR1_PWM_PIN, MOTOR_PWM_FREQ, 0);
-	pwm_init(MOTOR2_PWM_PIN, MOTOR_PWM_FREQ, 0);
+	pwm_init(MOTOR_RIGHT_PWM_PIN, MOTOR_PWM_FREQ, 0);
+	pwm_init(MOTOR_LEFT_PWM_PIN, MOTOR_PWM_FREQ, 0);
 }
 
-//设置两路电机有符号占空比
-void motor_set_duty(int16 motor1_duty, int16 motor2_duty)
+//调用接口统一使用“左、右”顺序，硬件通道映射只保留在本模块内。
+void motor_set_duty(int16 left_duty, int16 right_duty)
 {
-	motor_set_single(
-		motor1_duty,
-		MOTOR1_PWM_PIN,
-		MOTOR1_DIR_PIN,
-		MOTOR1_POSITIVE_DIR_LEVEL);
+	motor_left_duty_command = left_duty;
+	motor_right_duty_command = right_duty;
 
 	motor_set_single(
-		motor2_duty,
-		MOTOR2_PWM_PIN,
-		MOTOR2_DIR_PIN,
-		MOTOR2_POSITIVE_DIR_LEVEL);
+		right_duty,
+		MOTOR_RIGHT_PWM_PIN,
+		MOTOR_RIGHT_DIR_PIN,
+		MOTOR_RIGHT_POSITIVE_DIR_LEVEL);
+
+	motor_set_single(
+		left_duty,
+		MOTOR_LEFT_PWM_PIN,
+		MOTOR_LEFT_DIR_PIN,
+		MOTOR_LEFT_POSITIVE_DIR_LEVEL);
 }

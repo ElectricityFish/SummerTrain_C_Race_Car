@@ -6,6 +6,7 @@
 #include "Image_Process.h"
 #include "Control.h"
 #include "Encoder.h"
+#include "SpeedControl.h"
 #include "Kfilter.h"
 #include "Wireless.h"
 #include "FS-A8S.h"
@@ -27,6 +28,9 @@ static Menu_Item *cargo_folder = NULL;
 static Menu_Item *base_control_folder = NULL;
 static Menu_Item *wireless_control_folder = NULL;
 static Menu_Item *check_folder = NULL;
+static Menu_Item *speed_debug_folder = NULL;
+static Menu_Item *speed_left_pid_folder = NULL;
+static Menu_Item *speed_right_pid_folder = NULL;
 static Menu_Item *image_send_folder = NULL;
 static Menu_Item *image_send_origin_item = NULL;
 static Menu_Item *image_send_processed_item = NULL;
@@ -36,12 +40,18 @@ static uint8 cargo_state_menu_value = COMMON_STATE_IDLE;
 static uint8 cargo_fault_menu_value = CAR_PROTECTION_REASON_NONE;
 static uint8 image_send_status_menu_value = WIRELESS_IMAGE_SEND_NOT_SENT;
 static uint8 image_send_action_menu_value = 0;
-static int16 check_encoder1_menu_value = 0;
-static int16 check_encoder2_menu_value = 0;
+static int16 check_encoder_left_menu_value = 0;
+static int16 check_encoder_right_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
 static float check_pitch_menu_value = 0.0f;
 static float check_roll_menu_value = 0.0f;
 static uint32 fs_a8s_menu_frame_count = 0U;
+static int16 speed_last_left_actual = 0;
+static int16 speed_last_right_actual = 0;
+static int16 speed_last_left_out = 0;
+static int16 speed_last_right_out = 0;
+static float speed_last_left_error = 0.0f;
+static float speed_last_right_error = 0.0f;
 
 static uint8_t menu_view_first = 0;		//当前页面显示的第一个菜单项编号
 static bool menu_refresh_required = true;
@@ -129,6 +139,14 @@ static bool menu_is_wireless_control_page(void)
 	return (key != NULL && key->father == wireless_control_folder);
 }
 
+static bool menu_is_speed_debug_page(void)
+{
+	return (key != NULL)
+		&& ((key->father == speed_debug_folder)
+			|| (key->father == speed_left_pid_folder)
+			|| (key->father == speed_right_pid_folder));
+}
+
 // i-BUS 约每 7ms 一帧；菜单按每 4 帧刷新一次，避免屏幕被高频更新占满。
 static bool menu_update_fs_a8s_values(void)
 {
@@ -141,6 +159,44 @@ static bool menu_update_fs_a8s_values(void)
 
 	fs_a8s_menu_frame_count = valid_frame_count;
 	return true;
+}
+
+static bool menu_update_speed_values(void)
+{
+	bool changed = false;
+
+	if(speed_last_left_actual != speed_left_pid.ActualPulse)
+	{
+		speed_last_left_actual = speed_left_pid.ActualPulse;
+		changed = true;
+	}
+	if(speed_last_right_actual != speed_right_pid.ActualPulse)
+	{
+		speed_last_right_actual = speed_right_pid.ActualPulse;
+		changed = true;
+	}
+	if(speed_last_left_out != speed_left_pid.Out)
+	{
+		speed_last_left_out = speed_left_pid.Out;
+		changed = true;
+	}
+	if(speed_last_right_out != speed_right_pid.Out)
+	{
+		speed_last_right_out = speed_right_pid.Out;
+		changed = true;
+	}
+	if(speed_last_left_error != speed_left_pid.Error)
+	{
+		speed_last_left_error = speed_left_pid.Error;
+		changed = true;
+	}
+	if(speed_last_right_error != speed_right_pid.Error)
+	{
+		speed_last_right_error = speed_right_pid.Error;
+		changed = true;
+	}
+
+	return changed;
 }
 
 static bool menu_update_cargo_values(void)
@@ -178,21 +234,21 @@ static bool menu_update_image_send_status(void)
 //把中断中更新的脉冲结果同步到菜单绑定变量，返回值表示本次是否有变化。
 static bool menu_update_check_values(void)
 {
-	int16 encoder1_value = encoder1;
-	int16 encoder2_value = encoder2;
+	int16 encoder_left_value = encoder_left_pulse;
+	int16 encoder_right_value = encoder_right_pulse;
 	float yaw_value = yaw;
 	float pitch_value = pitch;
 	float roll_value = roll;
 	bool changed = false;
 
-	if(check_encoder1_menu_value != encoder1_value)
+	if(check_encoder_left_menu_value != encoder_left_value)
 	{
-		check_encoder1_menu_value = encoder1_value;
+		check_encoder_left_menu_value = encoder_left_value;
 		changed = true;
 	}
-	if(check_encoder2_menu_value != encoder2_value)
+	if(check_encoder_right_menu_value != encoder_right_value)
 	{
-		check_encoder2_menu_value = encoder2_value;
+		check_encoder_right_menu_value = encoder_right_value;
 		changed = true;
 	}
 	if(check_yaw_menu_value != yaw_value)
@@ -363,9 +419,53 @@ void menu_init(void)
 		}
 	}
 
+	// RUNNING 使用 RunTarget；IDLE 下可用 Enable + Run + 单轮 On 独立调试速度 PI。
+	speed_debug_folder = create_menu_folder_dynamic(&head, "Speed");
+	if(speed_debug_folder != NULL)
+	{
+		create_menu_number_range_dynamic(speed_debug_folder, "RunTarget", (void *)&speed_running_target_pulse,
+			int16_Box, 0.0f, 400.0f, 10.0f);
+		create_menu_number_range_dynamic(speed_debug_folder, "DebugEnable", (void *)&speed_debug_enabled,
+			uint8_Box, 0.0f, 1.0f, 1.0f);
+		create_menu_number_range_dynamic(speed_debug_folder, "DebugRun", (void *)&speed_debug_run,
+			uint8_Box, 0.0f, 1.0f, 1.0f);
+
+		speed_left_pid_folder = create_menu_folder_dynamic(speed_debug_folder, "Left");
+		if(speed_left_pid_folder != NULL)
+		{
+			create_menu_number_range_dynamic(speed_left_pid_folder, "On", (void *)&speed_debug_left_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
+			create_menu_number_range_dynamic(speed_left_pid_folder, "Target", (void *)&speed_left_pid.TargetPulse, int16_Box, -220.0f, 220.0f, 10.0f);
+			create_menu_number_range_dynamic(speed_left_pid_folder, "Kp", (void *)&speed_left_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
+			create_menu_number_range_dynamic(speed_left_pid_folder, "Ki", (void *)&speed_left_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
+			create_menu_number_range_dynamic(speed_left_pid_folder, "MaxPWM", (void *)&speed_left_pid.OutMax, int16_Box, 0.0f, 8000.0f, 50.0f);
+			item = create_menu_number_dynamic(speed_left_pid_folder, "Actual", (void *)&speed_left_pid.ActualPulse, int16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(speed_left_pid_folder, "Error", (void *)&speed_left_pid.Error, float_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(speed_left_pid_folder, "Out", (void *)&speed_left_pid.Out, int16_Box);
+			if(item != NULL) item->editable = false;
+		}
+
+		speed_right_pid_folder = create_menu_folder_dynamic(speed_debug_folder, "Right");
+		if(speed_right_pid_folder != NULL)
+		{
+			create_menu_number_range_dynamic(speed_right_pid_folder, "On", (void *)&speed_debug_right_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
+			create_menu_number_range_dynamic(speed_right_pid_folder, "Target", (void *)&speed_right_pid.TargetPulse, int16_Box, -220.0f, 220.0f, 10.0f);
+			create_menu_number_range_dynamic(speed_right_pid_folder, "Kp", (void *)&speed_right_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
+			create_menu_number_range_dynamic(speed_right_pid_folder, "Ki", (void *)&speed_right_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
+			create_menu_number_range_dynamic(speed_right_pid_folder, "MaxPWM", (void *)&speed_right_pid.OutMax, int16_Box, 0.0f, 8000.0f, 50.0f);
+			item = create_menu_number_dynamic(speed_right_pid_folder, "Actual", (void *)&speed_right_pid.ActualPulse, int16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(speed_right_pid_folder, "Error", (void *)&speed_right_pid.Error, float_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(speed_right_pid_folder, "Out", (void *)&speed_right_pid.Out, int16_Box);
+			if(item != NULL) item->editable = false;
+		}
+	}
+
 	//Check目录显示TIM6中断采集到的编码器脉冲，以及姿态解算角度。
 	check_folder = create_menu_folder_dynamic(&head, "Check");
-	item = create_menu_number_dynamic(check_folder, "Encoder1", &check_encoder1_menu_value, int16_Box);
+	item = create_menu_number_dynamic(check_folder, "Enc_Left", &check_encoder_left_menu_value, int16_Box);
 	if(item != NULL)
 	{
 		item->editable = false;
@@ -385,7 +485,7 @@ void menu_init(void)
 	{
 		item->editable = false;
 	}
-	item = create_menu_number_dynamic(check_folder, "Encoder2", &check_encoder2_menu_value, int16_Box);
+	item = create_menu_number_dynamic(check_folder, "Enc_Right", &check_encoder_right_menu_value, int16_Box);
 	if(item != NULL)
 	{
 		item->editable = false;
@@ -778,6 +878,7 @@ void menu_show(void)
 	bool cargo_value_changed;
 	bool image_send_status_changed;
 	bool fs_a8s_value_changed;
+	bool speed_value_changed;
 
 	//每秒结算一次的采集帧率同步到Image/FPS菜单项；只在Image目录中刷新菜单。
 	latest_fps = image_get_capture_fps();
@@ -794,6 +895,7 @@ void menu_show(void)
 	cargo_value_changed = menu_update_cargo_values();
 	image_send_status_changed = menu_update_image_send_status();
 	fs_a8s_value_changed = menu_update_fs_a8s_values();
+	speed_value_changed = menu_update_speed_values();
 
 	//图像预览页面按新帧刷新；普通菜单仍然只在内容变化时刷新
 	if(menu_is_image_preview())
@@ -809,7 +911,8 @@ void menu_show(void)
 		if((menu_is_check_page() && check_value_changed)
 			|| (menu_is_base_control_page() && cargo_value_changed)
 			|| (menu_is_image_send_page() && image_send_status_changed)
-			|| (menu_is_wireless_control_page() && fs_a8s_value_changed))
+			|| (menu_is_wireless_control_page() && fs_a8s_value_changed)
+			|| (menu_is_speed_debug_page() && speed_value_changed))
 		{
 			ips200_set_font(IPS200_8X16_FONT);
 			show_number();
