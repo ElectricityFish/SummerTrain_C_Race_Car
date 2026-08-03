@@ -246,7 +246,7 @@ void control_init(void)
     wireless_control_enabled_last = 0U;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
 
-    // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
+    // PID 的 Target/Actual 单位均� �图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
 	servo_pid.KpMin = 0.45f;
 	servo_pid.KpMax = 0.75f;
@@ -343,6 +343,7 @@ void servo_control_set_enabled(bool enabled)
 void servo_control(void)
 {
     float control_angle;
+    float control_correction;
 
     if(!servo_control_enabled || (common_state != COMMON_STATE_RUNNING))
     {
@@ -357,8 +358,20 @@ void servo_control(void)
     servo_pid.YawRate = mpu6050_gyro_transition(mpu6050_gyro_x_data);
     servo_pid_up_date(&servo_pid);
 
+    if(image_small_s_active != 0U)
+    {
+        if(servo_pid.Out > SERVO_CONTROL_SMALL_S_MAX_CORRECTION)
+        {
+            servo_pid.Out = SERVO_CONTROL_SMALL_S_MAX_CORRECTION;
+        }
+        else if(servo_pid.Out < -SERVO_CONTROL_SMALL_S_MAX_CORRECTION)
+        {
+            servo_pid.Out = -SERVO_CONTROL_SMALL_S_MAX_CORRECTION;
+        }
+    }
+
     // PID 输出是相对中位的角度修正量；底层接口需要以 90 度为中位的绝对逻辑角度。
-    control_angle = SERVOMOTOR_CONTROL_CENTER_ANGLE
-        + SERVO_CONTROL_DIRECTION * servo_pid.Out;
+    control_correction = SERVO_CONTROL_DIRECTION * servo_pid.Out;
+    control_angle = SERVOMOTOR_CONTROL_CENTER_ANGLE + control_correction;
     servomotor_set_angle(control_angle);
 }

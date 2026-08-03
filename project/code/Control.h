@@ -31,6 +31,9 @@ extern volatile uint8 wireless_control_enabled;   // Wireless_Control/Enable：0
 // 1.0f：图像中线右移时输出右转；若实车方向相反，改为 -1.0f。
 #define SERVO_CONTROL_DIRECTION                (1.0f)
 
+// 小 S 安全直切状态下，最终舵机相对中位最多修正 2 度，避免 PID 微分或横摆项再次放大打角。
+#define SERVO_CONTROL_SMALL_S_MAX_CORRECTION   (2.0f)
+
 extern Servo_PID_t servo_pid;
 extern volatile bool servo_control_enabled;
 

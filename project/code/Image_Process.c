@@ -6,15 +6,20 @@
 #define IMAGE_PROCESS_DISPLAY_HEIGHT  (153U)
 #define IMAGE_PROCESS_SMALL_S_BANDS   (4U)
 #define IMAGE_PROCESS_SMALL_S_VALID_PERCENT (60U)
-#define IMAGE_PROCESS_SMALL_S_ENTER_FRAMES  (2U)
+#define IMAGE_PROCESS_SMALL_S_SAFE_PERCENT  (90U)
+#define IMAGE_PROCESS_SMALL_S_SAFE_MARGIN   (16U)
+#define IMAGE_PROCESS_SMALL_S_RELAXED_ENTER_FRAMES (1U)
 #define IMAGE_PROCESS_SMALL_S_EXIT_FRAMES   (3U)
+#define IMAGE_PROCESS_SMALL_S_NONE          (0U)
+#define IMAGE_PROCESS_SMALL_S_RELAXED       (1U)
+#define IMAGE_PROCESS_SMALL_S_STRONG        (2U)
 
 Image_Process_Config image_process_config;
 
 uint16 image_left_edge[MT9V03X_H];
 uint16 image_right_edge[MT9V03X_H];
 uint8 image_mid_line[MT9V03X_H];
-uint8 image_small_s_active;
+volatile uint8 image_small_s_active;
 
 static uint8 image_reference_col;
 static uint8 image_reference_gray;
@@ -271,13 +276,14 @@ static void image_process_track_edges(const uint8 image[][MT9V03X_W])
     }
 }
 
-// 统计指定纵向观察带内双边都有效时的平均中点。边线落在图像边界表示该边未真正找到。
-static bool image_process_get_dual_edge_band_mid(uint8 start_percent, uint8 end_percent, uint8 *band_mid)
+// 优先用双边有效行计算观察带中点；近场赛道宽到出画时，退回使用该带全部逐行中点。
+static bool image_process_get_band_mid(uint8 start_percent, uint8 end_percent, uint8 *band_mid)
 {
     uint16 start_row = ((uint16)MT9V03X_H * start_percent) / 100U;
     uint16 end_row = ((uint16)MT9V03X_H * end_percent) / 100U;
-    uint32 mid_sum = 0U;
-    uint16 valid_count = 0U;
+    uint32 all_mid_sum = 0U;
+    uint32 dual_mid_sum = 0U;
+    uint16 dual_valid_count = 0U;
     uint16 row_count;
     uint16 row;
 
@@ -287,57 +293,95 @@ static bool image_process_get_dual_edge_band_mid(uint8 start_percent, uint8 end_
     }
     if(end_row <= start_row)
     {
+        *band_mid = MT9V03X_W / 2U;
         return false;
     }
 
     row_count = end_row - start_row;
     for(row = start_row; row < end_row; row++)
     {
+        uint16 row_mid = (image_left_edge[row] + image_right_edge[row]) / 2U;
+
+        all_mid_sum += row_mid;
         if((image_left_edge[row] > 0U)
             && (image_right_edge[row] < MT9V03X_W - 1U))
         {
-            mid_sum += (image_left_edge[row] + image_right_edge[row]) / 2U;
-            valid_count++;
+            dual_mid_sum += row_mid;
+            dual_valid_count++;
         }
     }
 
-    if((valid_count == 0U)
-        || ((uint32)valid_count * 100U
-            < (uint32)row_count * IMAGE_PROCESS_SMALL_S_VALID_PERCENT))
+    if((dual_valid_count != 0U)
+        && ((uint32)dual_valid_count * 100U
+            >= (uint32)row_count * IMAGE_PROCESS_SMALL_S_VALID_PERCENT))
     {
-        return false;
+        *band_mid = (uint8)((dual_mid_sum + dual_valid_count / 2U) / dual_valid_count);
+        return true;
     }
 
-    *band_mid = (uint8)((mid_sum + valid_count / 2U) / valid_count);
-    return true;
+    *band_mid = (uint8)((all_mid_sum + row_count / 2U) / row_count);
+    return false;
 }
 
-// 连续小 S 的中线会沿图像纵向连续两次反向，而普通直道/单弯通常不会。
-static bool image_process_detect_small_s(void)
+// 只有图像中心在中近场持续留有余量时，才允许把当前道路当作直线穿过。
+static bool image_process_small_s_center_corridor_safe(void)
+{
+    uint16 start_row = ((uint16)MT9V03X_H * 29U) / 100U;
+    uint16 end_row = ((uint16)MT9V03X_H * 89U) / 100U;
+    uint16 center_left = (MT9V03X_W - 1U) / 2U;
+    uint16 center_right = MT9V03X_W / 2U;
+    uint16 safe_count = 0U;
+    uint16 row_count;
+    uint16 row;
+
+    if(end_row > MT9V03X_H)
+    {
+        end_row = MT9V03X_H;
+    }
+    row_count = end_row - start_row;
+
+    for(row = start_row; row < end_row; row++)
+    {
+        // 偶数宽图像的几何中心位于 93/94 两列之间，分别向左右留相同余量。
+        if((image_left_edge[row] + IMAGE_PROCESS_SMALL_S_SAFE_MARGIN <= center_right)
+            && (image_right_edge[row] >= center_left + IMAGE_PROCESS_SMALL_S_SAFE_MARGIN))
+        {
+            safe_count++;
+        }
+    }
+
+    return ((uint32)safe_count * 100U
+        >= (uint32)row_count * IMAGE_PROCESS_SMALL_S_SAFE_PERCENT);
+}
+
+// 返回两级置信度：严格形态与带中心走廊保护的安全直切形态都可快速进入。
+static uint8 image_process_detect_small_s(bool *center_corridor_safe)
 {
     // 对 120 行图像约对应 14~29、35~49、55~69、75~95 行。
     static const uint8 band_start_percent[IMAGE_PROCESS_SMALL_S_BANDS] = {12U, 29U, 46U, 63U};
     static const uint8 band_end_percent[IMAGE_PROCESS_SMALL_S_BANDS] = {25U, 42U, 59U, 80U};
     uint8 band_mid[IMAGE_PROCESS_SMALL_S_BANDS];
+    bool band_dual_valid[IMAGE_PROCESS_SMALL_S_BANDS];
     uint8 min_mid;
     uint8 max_mid;
     uint8 min_swing;
     uint8 max_swing;
     int8 direction[IMAGE_PROCESS_SMALL_S_BANDS - 1U];
+    int8 previous_direction = 0;
+    uint8 significant_count = 0U;
+    uint8 reversal_count = 0U;
     uint8 index;
 
+    *center_corridor_safe = image_process_small_s_center_corridor_safe();
     if(image_process_config.small_s_enable == 0U)
     {
-        return false;
+        return IMAGE_PROCESS_SMALL_S_NONE;
     }
 
     for(index = 0U; index < IMAGE_PROCESS_SMALL_S_BANDS; index++)
     {
-        if(!image_process_get_dual_edge_band_mid(
-            band_start_percent[index], band_end_percent[index], &band_mid[index]))
-        {
-            return false;
-        }
+        band_dual_valid[index] = image_process_get_band_mid(
+            band_start_percent[index], band_end_percent[index], &band_mid[index]);
     }
 
     min_swing = image_process_limit_u8(
@@ -370,21 +414,52 @@ static bool image_process_detect_small_s(void)
         }
         else
         {
-            return false;
+            direction[index - 1U] = 0;
+        }
+
+        if(direction[index - 1U] != 0)
+        {
+            significant_count++;
+            if((previous_direction != 0)
+                && (direction[index - 1U] != previous_direction))
+            {
+                reversal_count++;
+            }
+            previous_direction = direction[index - 1U];
         }
     }
 
     if((uint8)(max_mid - min_mid) > max_swing)
     {
-        return false;
+        return IMAGE_PROCESS_SMALL_S_NONE;
     }
 
-    return (direction[0] != direction[1]) && (direction[1] != direction[2]);
+    // 严格条件保持原有的两次连续反向，但加上中心走廊安全约束后允许单帧快速进入。
+    if(*center_corridor_safe
+        && band_dual_valid[0] && band_dual_valid[1]
+        && band_dual_valid[2] && band_dual_valid[3]
+        && (significant_count == IMAGE_PROCESS_SMALL_S_BANDS - 1U)
+        && (reversal_count == IMAGE_PROCESS_SMALL_S_BANDS - 2U))
+    {
+        return IMAGE_PROCESS_SMALL_S_STRONG;
+    }
+
+    // 安全直切条件允许近场边线出画，也不强制当前视野内已经出现反向。
+    // 这能覆盖小 S 的单侧隆起阶段；前三带双边可靠和中心走廊余量负责排除普通大弯及特殊元素。
+    if(*center_corridor_safe
+        && band_dual_valid[0] && band_dual_valid[1] && band_dual_valid[2]
+        && ((uint8)(max_mid - min_mid) >= min_swing))
+    {
+        return IMAGE_PROCESS_SMALL_S_RELAXED;
+    }
+
+    return IMAGE_PROCESS_SMALL_S_NONE;
 }
 
 static void image_process_update_small_s(void)
 {
-    bool detected = image_process_detect_small_s();
+    bool center_corridor_safe;
+    uint8 confidence = image_process_detect_small_s(&center_corridor_safe);
 
     if(image_process_config.small_s_enable == 0U)
     {
@@ -394,16 +469,23 @@ static void image_process_update_small_s(void)
         return;
     }
 
-    if(detected)
+    if(confidence == IMAGE_PROCESS_SMALL_S_STRONG)
+    {
+        // 严格形态已经足够排除直道和普通单弯，不再等待第二帧。
+        image_small_s_active = 1U;
+        image_small_s_detect_count = 0U;
+        image_small_s_miss_count = 0U;
+    }
+    else if(confidence == IMAGE_PROCESS_SMALL_S_RELAXED)
     {
         image_small_s_miss_count = 0U;
         if(image_small_s_active == 0U)
         {
-            if(image_small_s_detect_count < IMAGE_PROCESS_SMALL_S_ENTER_FRAMES)
+            if(image_small_s_detect_count < IMAGE_PROCESS_SMALL_S_RELAXED_ENTER_FRAMES)
             {
                 image_small_s_detect_count++;
             }
-            if(image_small_s_detect_count >= IMAGE_PROCESS_SMALL_S_ENTER_FRAMES)
+            if(image_small_s_detect_count >= IMAGE_PROCESS_SMALL_S_RELAXED_ENTER_FRAMES)
             {
                 image_small_s_active = 1U;
             }
@@ -414,11 +496,18 @@ static void image_process_update_small_s(void)
         image_small_s_detect_count = 0U;
         if(image_small_s_active != 0U)
         {
-            if(image_small_s_miss_count < IMAGE_PROCESS_SMALL_S_EXIT_FRAMES)
+            // 一旦直行中心走廊不再安全，立即交还普通循迹，保证衔接弯道响应速度。
+            if(!center_corridor_safe)
+            {
+                image_small_s_active = 0U;
+                image_small_s_miss_count = 0U;
+            }
+            else if(image_small_s_miss_count < IMAGE_PROCESS_SMALL_S_EXIT_FRAMES)
             {
                 image_small_s_miss_count++;
             }
-            if(image_small_s_miss_count >= IMAGE_PROCESS_SMALL_S_EXIT_FRAMES)
+            if((image_small_s_active != 0U)
+                && (image_small_s_miss_count >= IMAGE_PROCESS_SMALL_S_EXIT_FRAMES))
             {
                 image_small_s_active = 0U;
             }
@@ -491,7 +580,7 @@ void image_process_init(void)
     image_process_config.mid_filter_current = 80U;
     image_process_config.small_s_enable = 1U;
     image_process_config.small_s_min_swing = 5U;
-    image_process_config.small_s_max_swing = 28U;
+    image_process_config.small_s_max_swing = 40U;
     image_process_config.small_s_error_limit = 2U;
 
     memset(image_left_edge, 0, sizeof(image_left_edge));

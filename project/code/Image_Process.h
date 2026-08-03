@@ -30,7 +30,7 @@ extern Image_Process_Config image_process_config;
 extern uint16 image_left_edge[MT9V03X_H];
 extern uint16 image_right_edge[MT9V03X_H];
 extern uint8 image_mid_line[MT9V03X_H];
-extern uint8 image_small_s_active;
+extern volatile uint8 image_small_s_active;
 
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
