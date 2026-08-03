@@ -96,9 +96,9 @@ int main(void)
 			//speed_right_pid.ActualPulse
 			//);
 			
-			wireless_uart_printf("%d,%d\n",
-				image_get_vsync_max_gap_ms(),
-				image_get_capture_max_gap_ms());
+			//wireless_uart_printf("%d,%d\n",
+				//image_get_vsync_max_gap_ms(),
+				//image_get_capture_max_gap_ms());
 			
 		}
 		

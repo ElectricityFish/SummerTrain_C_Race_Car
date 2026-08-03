@@ -305,7 +305,7 @@ void image_process_init(void)
     image_process_config.contrast_threshold = 20U;
     image_process_config.contrast_offset = 3U;
     image_process_config.search_range = 10U;
-    image_process_config.weight_center_row = 80U;
+    image_process_config.weight_center_row = 85U;
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
