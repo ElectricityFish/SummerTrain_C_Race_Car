@@ -394,6 +394,12 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "S_Enable", &image_process_config.small_s_enable, uint8_Box, 0.0f, 1.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "S_MinSwing", &image_process_config.small_s_min_swing, uint8_Box, 1.0f, 20.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "S_MaxSwing", &image_process_config.small_s_max_swing, uint8_Box, 4.0f, 60.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "S_ErrLimit", &image_process_config.small_s_error_limit, uint8_Box, 0.0f, 20.0f, 1.0f);
+		item = create_menu_number_dynamic(process_folder, "S_Active", &image_small_s_active, uint8_Box);
+		if(item != NULL) item->editable = false;
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。

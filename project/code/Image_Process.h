@@ -18,6 +18,10 @@ typedef struct
     uint8 weight_span;             // 加权区域半宽，单位：行
     uint8 weight_peak;             // 加权区域中心的最大权重
     uint8 mid_filter_current;      // 最终中线中当前帧占比，范围 0~100
+    uint8 small_s_enable;          // 连续小 S 弯抑制开关，0 关闭，1 开启
+    uint8 small_s_min_swing;       // 相邻观察带构成反向摆动所需的最小中线差，单位：像素
+    uint8 small_s_max_swing;       // 小 S 弯四个观察带允许的最大总摆幅，单位：像素
+    uint8 small_s_error_limit;     // 小 S 弯状态下最终中点相对图像中心的最大误差，单位：像素
 } Image_Process_Config;
 
 extern Image_Process_Config image_process_config;
@@ -26,6 +30,7 @@ extern Image_Process_Config image_process_config;
 extern uint16 image_left_edge[MT9V03X_H];
 extern uint16 image_right_edge[MT9V03X_H];
 extern uint8 image_mid_line[MT9V03X_H];
+extern uint8 image_small_s_active;
 
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
