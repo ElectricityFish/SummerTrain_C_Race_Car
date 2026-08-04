@@ -41,7 +41,7 @@ typedef struct {
 	float Kd;
 	// 横摆角速度阻尼系数；YawRate 单位为 deg/s，因此 Kd2 的量纲为 s。
 	float Kd2;
-	// X 轴陀螺仪直接换算得到的横摆角速度：左转为正，右转为负。
+	// Z 轴陀螺仪直接换算得到的横摆角速度：左转为正，右转为负。
 	float YawRate;
 
 	float Error0;

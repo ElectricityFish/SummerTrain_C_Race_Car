@@ -254,8 +254,9 @@ void control_init(void)
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
     servo_pid.Kd = 1.6f;
-    // 角速度已换算为 deg/s；0.05 是较保守的起调值，对应 100 deg/s 时修正 5 度。
-    servo_pid.Kd2 = 0.25f;
+    // 学长代码的 Kd2=0.25 作用于 gyro_raw*0.01；折算到 deg/s 后约为 0.036，先取 0.04 起调。
+    // 左转横摆角速度为正，PID 中的 -Kd2*YawRate 会给出右转修正，形成负反馈。
+    servo_pid.Kd2 = 0.04f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
     servo_pid.OutMax = 55.0f;
     servo_pid.OutMin = -55.0f;
@@ -354,8 +355,8 @@ void servo_control(void)
     // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
     servo_pid.Actual = (float)image_process_get_final_mid();
-    // 直接使用最近一次 MPU6050 采样的 X 轴原始值，仅做量程换算，不经过量化或滤波。
-    servo_pid.YawRate = mpu6050_gyro_transition(mpu6050_gyro_x_data);
+    // Z 轴是本车横摆轴；直接使用最近一次采样并换算为 deg/s，不经过姿态解算中的量化。
+    servo_pid.YawRate = mpu6050_gyro_transition(mpu6050_gyro_z_data);
     servo_pid_up_date(&servo_pid);
 
     // PID 输出是相对中位的角度修正量；底层接口需要以 90 度为中位的绝对逻辑角度。
