@@ -474,9 +474,9 @@ void menu_init(void)
 			create_menu_number_range_dynamic(differential_folder, "EmpEnable", (void *)&empirical_differential_enabled,
 				uint8_Box, 0.0f, 1.0f, 1.0f);
 			create_menu_number_range_dynamic(differential_folder, "EmpReduce", (void *)&empirical_reduce_max_ratio,
-				float_Box, 0.0f, 0.50f, 0.05f);
+				float_Box, 0.0f, 0.50f, 0.01f);
 			create_menu_number_range_dynamic(differential_folder, "EmpPlus", (void *)&empirical_plus_max_ratio,
-				float_Box, 0.0f, 0.30f, 0.02f);
+				float_Box, 0.0f, 0.30f, 0.01f);
 			create_menu_number_range_dynamic(differential_folder, "InnerMin", (void *)&differential_inner_min_ratio,
 				float_Box, 0.10f, 1.00f, 0.05f);
 			create_menu_number_range_dynamic(differential_folder, "OutMax", (void *)&differential_outer_max_ratio,
