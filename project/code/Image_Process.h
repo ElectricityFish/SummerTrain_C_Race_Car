@@ -20,12 +20,22 @@ typedef struct
     uint8 mid_filter_current;      // 最终中线中当前帧占比，范围 0~100
 } Image_Process_Config;
 
+// 十字状态：连续确认后会启用两拐点到底部两角的边线补线，并参与中线控制。
+typedef enum
+{
+    IMAGE_CROSS_STATE_NONE = 0,
+    IMAGE_CROSS_STATE_CANDIDATE,
+    IMAGE_CROSS_STATE_DETECTED,
+} image_cross_state_enum;
+
 extern Image_Process_Config image_process_config;
 
 // 每行的处理结果，供显示、调试和后续特殊元素识别使用。
 extern uint16 image_left_edge[MT9V03X_H];
 extern uint16 image_right_edge[MT9V03X_H];
 extern uint8 image_mid_line[MT9V03X_H];
+extern bool image_left_edge_valid[MT9V03X_H];
+extern bool image_right_edge_valid[MT9V03X_H];
 
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
@@ -44,5 +54,13 @@ uint8 image_process_get_reference_col(void);
 uint8 image_process_get_reference_gray(void);
 uint8 image_process_get_white_min(void);
 uint8 image_process_get_white_max(void);
+
+// 返回当前十字识别状态，以及用于补线控制和调试显示的左上、右上拐点。
+image_cross_state_enum image_process_get_cross_state(void);
+bool image_process_get_cross_corners(
+    uint8 *left_col,
+    uint8 *left_row,
+    uint8 *right_col,
+    uint8 *right_row);
 
 #endif

@@ -18,6 +18,8 @@
 #define WIRELESS_IMAGE_RGB565_BLUE             (0x001FU)
 #define WIRELESS_IMAGE_RGB565_GREEN            (0x07E0U)
 #define WIRELESS_IMAGE_RGB565_YELLOW           (0xFFE0U)
+#define WIRELESS_IMAGE_RGB565_MAGENTA          (0xF81FU)
+#define WIRELESS_IMAGE_RGB565_CYAN             (0x07FFU)
 
 volatile uint8 wireless_image_send_status = WIRELESS_IMAGE_SEND_NOT_SENT;
 
@@ -126,6 +128,37 @@ static uint16 wireless_image_gray_to_rgb565(uint8 gray)
         | ((uint16)gray >> 3));
 }
 
+static void wireless_image_draw_cross_marker(
+    uint16 row,
+    uint8 marker_col,
+    uint8 marker_row,
+    uint16 color)
+{
+    uint16 row_difference = (row >= marker_row) ? (row - marker_row) : (marker_row - row);
+
+    if(row_difference > 2U)
+    {
+        return;
+    }
+
+    wireless_image_processed_line[marker_col] = color;
+    if(row_difference == 0U)
+    {
+        uint16 start_col = (marker_col >= 2U) ? (marker_col - 2U) : 0U;
+        uint16 end_col = marker_col + 2U;
+        uint16 col;
+
+        if(end_col >= MT9V03X_W)
+        {
+            end_col = MT9V03X_W - 1U;
+        }
+        for(col = start_col; col <= end_col; col++)
+        {
+            wireless_image_processed_line[col] = color;
+        }
+    }
+}
+
 static bool wireless_image_send_origin(uint8 channel_id)
 {
     if(!wireless_image_send_header(
@@ -149,6 +182,16 @@ static bool wireless_image_send_processed(uint8 channel_id)
     uint16 row;
     uint32 image_size = (uint32)MT9V03X_IMAGE_SIZE * sizeof(uint16);
     uint8 reference_col = image_process_get_reference_col();
+    uint8 cross_left_col = 0U;
+    uint8 cross_left_row = 0U;
+    uint8 cross_right_col = 0U;
+    uint8 cross_right_row = 0U;
+    bool cross_corners_valid = image_process_get_cross_corners(
+        &cross_left_col,
+        &cross_left_row,
+        &cross_right_col,
+        &cross_right_row);
+    image_cross_state_enum cross_state = image_process_get_cross_state();
 
     if(!wireless_image_send_header(
         channel_id,
@@ -174,11 +217,11 @@ static bool wireless_image_send_processed(uint8 channel_id)
         }
 
         // 与 image_process_display() 保持相同的绘制顺序，后绘制的参考列覆盖同位置的其他标记。
-        if(left_edge < MT9V03X_W)
+        if(image_left_edge_valid[row] && left_edge < MT9V03X_W)
         {
             wireless_image_processed_line[left_edge] = WIRELESS_IMAGE_RGB565_RED;
         }
-        if(right_edge < MT9V03X_W)
+        if(image_right_edge_valid[row] && right_edge < MT9V03X_W)
         {
             wireless_image_processed_line[right_edge] = WIRELESS_IMAGE_RGB565_BLUE;
         }
@@ -189,6 +232,34 @@ static bool wireless_image_send_processed(uint8 channel_id)
         if(reference_col < MT9V03X_W)
         {
             wireless_image_processed_line[reference_col] = WIRELESS_IMAGE_RGB565_YELLOW;
+        }
+
+        if(cross_corners_valid)
+        {
+            wireless_image_draw_cross_marker(
+                row,
+                cross_left_col,
+                cross_left_row,
+                WIRELESS_IMAGE_RGB565_MAGENTA);
+            wireless_image_draw_cross_marker(
+                row,
+                cross_right_col,
+                cross_right_row,
+                WIRELESS_IMAGE_RGB565_CYAN);
+        }
+
+        // 左上角状态条：黄色表示单帧候选，绿色表示连续两帧确认。
+        if(row >= 2U && row <= 4U && cross_state != IMAGE_CROSS_STATE_NONE)
+        {
+            uint16 status_col;
+            uint16 status_color = (cross_state == IMAGE_CROSS_STATE_DETECTED)
+                ? WIRELESS_IMAGE_RGB565_GREEN
+                : WIRELESS_IMAGE_RGB565_YELLOW;
+
+            for(status_col = 2U; status_col <= 7U; status_col++)
+            {
+                wireless_image_processed_line[status_col] = status_color;
+            }
         }
 
         if(wireless_uart_send_buffer_timeout(
