@@ -9,7 +9,7 @@
 #define ACKERMANN_DEG_TO_RAD               (0.0174532925f)
 #define DIFFERENTIAL_ERROR_DEADZONE_PX     (10.0f)
 #define EMPIRICAL_ERROR_FULL_PX             (20.0f)
-#define EMPIRICAL_REDUCE_RATIO_MAX         (0.50f)
+#define EMPIRICAL_REDUCE_RATIO_MAX         (1.00f)
 #define EMPIRICAL_PLUS_RATIO_MAX           (0.30f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MIN   (1.00f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MAX   (2.00f)
@@ -149,7 +149,7 @@ void speed_decision_init(void)
 	empirical_differential_enabled = 1U;
 	empirical_reduce_max_ratio = 0.50f;
 	empirical_plus_max_ratio = 0.00f;
-	differential_inner_min_ratio = 0.50f;
+	differential_inner_min_ratio = 0.00f;
 	differential_outer_max_ratio = 1.30f;
 	speed_decision_stop();
 }
