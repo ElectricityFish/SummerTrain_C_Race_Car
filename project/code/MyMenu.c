@@ -490,7 +490,7 @@ void menu_init(void)
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "WheelDeg", (void *)&ackermann_wheel_delta_deg, float_Box);
 			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "SteerRate", (void *)&empirical_steer_ratio, float_Box);
+			item = create_menu_number_dynamic(differential_folder, "ErrorRate", (void *)&empirical_error_ratio, float_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "AckRatio", (void *)&ackermann_differential_ratio, float_Box);
 			if(item != NULL) item->editable = false;

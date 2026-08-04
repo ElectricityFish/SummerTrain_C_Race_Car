@@ -143,7 +143,8 @@ void TIM6_1ms_PIT(void)
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
 			// RUNNING 下只有 SpeedDecision 可以写正式左右目标；
-			// RunTarget 是分配前基准，依次经过阿克曼、经验残差和 OutMax 限幅。
+			// RunTarget 是分配前基准；默认由图像误差经验差速分配左右目标，
+			// 阿克曼仅保留为可选 A/B 对照开关。
 			speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))

@@ -8,6 +8,7 @@
 #define ACKERMANN_GAIN                     (1.0f)
 #define ACKERMANN_DEG_TO_RAD               (0.0174532925f)
 #define DIFFERENTIAL_ERROR_DEADZONE_PX     (10.0f)
+#define EMPIRICAL_ERROR_FULL_PX             (20.0f)
 #define EMPIRICAL_REDUCE_RATIO_MAX         (0.50f)
 #define EMPIRICAL_PLUS_RATIO_MAX           (0.30f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MIN   (1.00f)
@@ -45,7 +46,7 @@ volatile float ackermann_servo_delta_deg;
 volatile float ackermann_wheel_delta_deg;
 volatile float ackermann_differential_ratio;
 volatile float ackermann_pixel_error_abs;
-volatile float empirical_steer_ratio;
+volatile float empirical_error_ratio;
 volatile float empirical_inner_reduce_pulse;
 volatile float empirical_outer_plus_pulse;
 volatile float speed_decision_left_raw_target_pulse;
@@ -120,28 +121,15 @@ static float speed_decision_lookup_wheel_delta(float servo_delta_deg)
 	return ackermann_steer_table[ACKERMANN_STEER_TABLE_COUNT - 1U].wheel_delta_deg;
 }
 
-static float speed_decision_get_steer_ratio(float wheel_delta_deg)
+static float speed_decision_get_error_ratio(float error_abs)
 {
-	float maximum_angle;
-
-	if(wheel_delta_deg < 0.0f)
+	if(EMPIRICAL_ERROR_FULL_PX <= 0.0f)
 	{
-		maximum_angle = speed_decision_absf(
-			ackermann_steer_table[0].wheel_delta_deg);
-	}
-	else
-	{
-		maximum_angle = ackermann_steer_table[
-			ACKERMANN_STEER_TABLE_COUNT - 1U].wheel_delta_deg;
-	}
-
-	if(maximum_angle <= 0.0f)
-	{
-		return 0.0f;
+		return 1.0f;
 	}
 
 	return speed_decision_limitf(
-		speed_decision_absf(wheel_delta_deg) / maximum_angle,
+		error_abs / EMPIRICAL_ERROR_FULL_PX,
 		0.0f,
 		1.0f);
 }
@@ -157,12 +145,12 @@ static float speed_decision_tan_taylor(float angle_rad)
 
 void speed_decision_init(void)
 {
-	ackermann_enabled = 1U;
+	ackermann_enabled = 0U;				//先将阿克曼差速关闭
 	empirical_differential_enabled = 1U;
-	empirical_reduce_max_ratio = 0.10f;
+	empirical_reduce_max_ratio = 0.25f;
 	empirical_plus_max_ratio = 0.00f;
-	differential_inner_min_ratio = 0.25f;
-	differential_outer_max_ratio = 1.75f;
+	differential_inner_min_ratio = 0.50f;
+	differential_outer_max_ratio = 1.30f;
 	speed_decision_stop();
 }
 
@@ -188,11 +176,10 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 	ackermann_wheel_delta_deg = speed_decision_lookup_wheel_delta(
 		ackermann_servo_delta_deg);
 	ackermann_pixel_error_abs = speed_decision_absf(steering_error_px);
-	empirical_steer_ratio = speed_decision_get_steer_ratio(
-		ackermann_wheel_delta_deg);
 	base_target_float = (float)speed_decision_base_target_pulse;
 
 	ackermann_differential_ratio = 0.0f;
+	empirical_error_ratio = 0.0f;
 	empirical_inner_reduce_pulse = 0.0f;
 	empirical_outer_plus_pulse = 0.0f;
 	speed_decision_differential_active = 0U;
@@ -214,6 +201,10 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 	}
 
 	speed_decision_differential_active = 1U;
+	// 10 像素以内完全关闭；超过死区后直接使用完整图像误差归一化，
+	// 不减去死区值，也不做渐进混合。误差达到 20 像素时为满差速。
+	empirical_error_ratio = speed_decision_get_error_ratio(
+		ackermann_pixel_error_abs);
 	if(ackermann_enabled != 0U)
 	{
 		wheel_angle_rad = ackermann_wheel_delta_deg * ACKERMANN_DEG_TO_RAD;
@@ -241,18 +232,19 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 			EMPIRICAL_PLUS_RATIO_MAX);
 		empirical_inner_reduce_pulse = base_target_float
 			* empirical_reduce_ratio
-			* empirical_steer_ratio;
+			* empirical_error_ratio;
 		empirical_outer_plus_pulse = base_target_float
 			* empirical_plus_ratio
-			* empirical_steer_ratio;
+			* empirical_error_ratio;
 
-		// 正轮角为左转：左轮是内轮；负轮角为右转：右轮是内轮。
-		if(ackermann_wheel_delta_deg > 0.0f)
+		// Error = Target - Actual：正误差需要左转，左轮是内轮；
+		// 负误差需要右转，右轮是内轮。经验差速不再依赖舵机命令或轮角。
+		if(steering_error_px > 0.0f)
 		{
 			left_raw_target -= empirical_inner_reduce_pulse;
 			right_raw_target += empirical_outer_plus_pulse;
 		}
-		else if(ackermann_wheel_delta_deg < 0.0f)
+		else if(steering_error_px < 0.0f)
 		{
 			right_raw_target -= empirical_inner_reduce_pulse;
 			left_raw_target += empirical_outer_plus_pulse;
@@ -282,11 +274,11 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 		0.0f,
 		1.0f);
 	inner_min_target = base_target_float * inner_min_ratio;
-	if(ackermann_wheel_delta_deg > 0.0f)
+	if(steering_error_px > 0.0f)
 	{
 		left_target = speed_decision_maxf(left_target, inner_min_target);
 	}
-	else if(ackermann_wheel_delta_deg < 0.0f)
+	else if(steering_error_px < 0.0f)
 	{
 		right_target = speed_decision_maxf(right_target, inner_min_target);
 	}
@@ -309,7 +301,7 @@ void speed_decision_stop(void)
 	ackermann_wheel_delta_deg = 0.0f;
 	ackermann_differential_ratio = 0.0f;
 	ackermann_pixel_error_abs = 0.0f;
-	empirical_steer_ratio = 0.0f;
+	empirical_error_ratio = 0.0f;
 	empirical_inner_reduce_pulse = 0.0f;
 	empirical_outer_plus_pulse = 0.0f;
 	speed_decision_left_raw_target_pulse = 0.0f;
