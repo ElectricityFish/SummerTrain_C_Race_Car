@@ -147,7 +147,7 @@ void speed_decision_init(void)
 {
 	ackermann_enabled = 0U;				//先将阿克曼差速关闭
 	empirical_differential_enabled = 1U;
-	empirical_reduce_max_ratio = 0.25f;
+	empirical_reduce_max_ratio = 0.50f;
 	empirical_plus_max_ratio = 0.00f;
 	differential_inner_min_ratio = 0.50f;
 	differential_outer_max_ratio = 1.30f;
