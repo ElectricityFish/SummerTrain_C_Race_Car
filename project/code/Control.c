@@ -84,7 +84,7 @@ static void car_state_apply(Common_State next_state)
     {
 		speed_control_debug_stop();
 		speed_control_set_closed_loop_enabled(true);
-		speed_decision_apply(speed_running_target_pulse);
+		speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
         servo_control_set_enabled(true);
     }
     else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
@@ -249,13 +249,13 @@ void control_init(void)
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-	servo_pid.KpMin = 0.45f;
-	servo_pid.KpMax = 0.75f;
+	servo_pid.KpMin = 0.35f;
+	servo_pid.KpMax = 0.65f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 1.45f;
+    servo_pid.Kd = 1.6f;
     // 角速度已换算为 deg/s；0.05 是较保守的起调值，对应 100 deg/s 时修正 5 度。
-    servo_pid.Kd2 = 0.1f;
+    servo_pid.Kd2 = 0.25f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
     servo_pid.OutMax = 55.0f;
     servo_pid.OutMin = -55.0f;

@@ -31,10 +31,14 @@ static const Ackermann_Steer_Table_t ackermann_steer_table[] =
 
 volatile uint8 ackermann_enabled;
 volatile float ackermann_gain;
+volatile float ackermann_error_off_px;
+volatile float ackermann_error_full_px;
 volatile int16 speed_decision_base_target_pulse;
 volatile float ackermann_servo_delta_deg;
 volatile float ackermann_wheel_delta_deg;
 volatile float ackermann_differential_ratio;
+volatile float ackermann_pixel_error_abs;
+volatile float ackermann_mix;
 
 static float speed_decision_absf(float value)
 {
@@ -115,14 +119,18 @@ static float speed_decision_tan_taylor(float angle_rad)
 void speed_decision_init(void)
 {
 	ackermann_enabled = 1U;
-	ackermann_gain = 0.95f;
+	ackermann_gain = 1.80f;
+	ackermann_error_off_px = 10.0f;
+	ackermann_error_full_px = 15.0f;
 	speed_decision_stop();
 }
 
-void speed_decision_apply(int16 base_target)
+void speed_decision_apply(int16 base_target, float steering_error_px)
 {
 	float wheel_angle_rad;
 	float gain;
+	float error_off;
+	float error_full;
 	float scale;
 	float left_target;
 	float right_target;
@@ -132,9 +140,33 @@ void speed_decision_apply(int16 base_target)
 		- SERVOMOTOR_CONTROL_CENTER_ANGLE;
 	ackermann_wheel_delta_deg = speed_decision_lookup_wheel_delta(
 		ackermann_servo_delta_deg);
+	ackermann_pixel_error_abs = speed_decision_absf(steering_error_px);
+
+	// 误差不超过实测直道范围时完全关闭差速；随后在一个小区间内平滑介入，
+	// 避免高速下左右目标在阈值边缘发生阶跃。ErrFull<=ErrOff时退化为硬阈值。
+	error_off = speed_decision_maxf(0.0f, ackermann_error_off_px);
+	error_full = speed_decision_maxf(0.0f, ackermann_error_full_px);
+	if(ackermann_pixel_error_abs <= error_off)
+	{
+		ackermann_mix = 0.0f;
+	}
+	else if(error_full <= error_off)
+	{
+		ackermann_mix = 1.0f;
+	}
+	else if(ackermann_pixel_error_abs >= error_full)
+	{
+		ackermann_mix = 1.0f;
+	}
+	else
+	{
+		ackermann_mix = (ackermann_pixel_error_abs - error_off)
+			/ (error_full - error_off);
+	}
 
 	if((ackermann_enabled == 0U) || (speed_decision_base_target_pulse == 0))
 	{
+		ackermann_mix = 0.0f;
 		ackermann_differential_ratio = 0.0f;
 		speed_control_set_closed_loop_target(
 			speed_decision_base_target_pulse,
@@ -147,7 +179,8 @@ void speed_decision_apply(int16 base_target)
 	wheel_angle_rad = ackermann_wheel_delta_deg * ACKERMANN_DEG_TO_RAD;
 	ackermann_differential_ratio = gain * ACKERMANN_REAR_TRACK_MM
 		/ (2.0f * ACKERMANN_WHEELBASE_MM)
-		* speed_decision_tan_taylor(wheel_angle_rad);
+		* speed_decision_tan_taylor(wheel_angle_rad)
+		* ackermann_mix;
 
 	// RunTarget 是外轮上限。等比例缩放后保持几何内外轮比，且任一轮都不超出基础目标。
 	scale = speed_decision_maxf(1.0f,
@@ -170,4 +203,6 @@ void speed_decision_stop(void)
 	ackermann_servo_delta_deg = 0.0f;
 	ackermann_wheel_delta_deg = 0.0f;
 	ackermann_differential_ratio = 0.0f;
+	ackermann_pixel_error_abs = 0.0f;
+	ackermann_mix = 0.0f;
 }

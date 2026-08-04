@@ -144,7 +144,7 @@ void TIM6_1ms_PIT(void)
 		{
 			// RUNNING 下只有 SpeedDecision 可以写正式左右目标；
 			// RunTarget 同时作为外轮上限，阿克曼只按比例降低内轮。
-			speed_decision_apply(speed_running_target_pulse);
+			speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))
 			&& speed_control_closed_loop_is_active()
