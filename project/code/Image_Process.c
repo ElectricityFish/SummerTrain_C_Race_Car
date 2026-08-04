@@ -19,6 +19,12 @@
 #define IMAGE_CROSS_LANE_ROW_MAX_GAP         (150U)
 #define IMAGE_CROSS_CORNER_MAX_ROW_DIFF      (18U)
 #define IMAGE_CROSS_MID_MAX_OFFSET           (36U)
+#define IMAGE_CROSS_TANGENT_SEARCH_TOP       (30U)
+#define IMAGE_CROSS_TANGENT_SEARCH_BOTTOM    (72U)
+#define IMAGE_CROSS_TANGENT_HALF_WINDOW       (3U)
+#define IMAGE_CROSS_TANGENT_MAX_STEP         (10U)
+#define IMAGE_CROSS_TANGENT_EDGE_MARGIN       (2U)
+#define IMAGE_CROSS_SLOPE_SCALE              (256)
 #define IMAGE_CROSS_FULL_WIDTH_TOP           (42U)
 #define IMAGE_CROSS_FULL_WIDTH_BOTTOM        (95U)
 #define IMAGE_CROSS_FULL_WIDTH_WHITE_MIN     (MT9V03X_W - 12U)
@@ -427,22 +433,29 @@ static bool image_process_has_cross_white_band(const uint8 image[][MT9V03X_W])
     return false;
 }
 
-// 在过渡带中，左边线最靠右、右边线最靠左的位置分别对应两个上拐点。
+// 在确认存在十字过渡带后，选择与“候选点到底角补线”方向最接近的轮廓切点。
 static bool image_process_find_cross_corner(
     bool left_side,
     uint8 *corner_col,
     uint8 *corner_row)
 {
-    uint8 best_col = left_side ? 0U : (MT9V03X_W - 1U);
+    const uint16 *edge = left_side ? image_cross_scan_left : image_cross_scan_right;
+    const bool *edge_valid = left_side
+        ? image_cross_scan_left_valid
+        : image_cross_scan_right_valid;
+    int32 bottom_col = left_side ? 0 : (MT9V03X_W - 1U);
+    uint16 best_score = 0xFFFFU;
+    uint8 best_col = 0U;
     uint8 best_row = 0U;
     uint16 row;
-    bool found = false;
+    bool transition_found = false;
+    bool tangent_found = false;
 
+    // 原过渡带条件只负责证明这里存在十字拐角，不再用横坐标极值决定拐点。
     for(row = IMAGE_CROSS_CORNER_SEARCH_TOP; row <= IMAGE_CROSS_CORNER_SEARCH_BOTTOM; row++)
     {
         uint8 above_invalid = 0U;
         uint8 below_valid = 0U;
-        uint16 col;
         uint16 sample;
 
         if(!image_process_cross_lane_row_valid((uint8)row))
@@ -473,16 +486,85 @@ static bool image_process_find_cross_corner(
             continue;
         }
 
-        col = left_side ? image_cross_scan_left[row] : image_cross_scan_right[row];
-        if(!found || (left_side && col > best_col) || (!left_side && col < best_col))
+        transition_found = true;
+        break;
+    }
+
+    if(!transition_found)
+    {
+        return false;
+    }
+
+    for(row = IMAGE_CROSS_TANGENT_SEARCH_TOP; row <= IMAGE_CROSS_TANGENT_SEARCH_BOTTOM; row++)
+    {
+        int32 local_slope;
+        int32 repair_slope;
+        int32 slope_difference;
+        uint16 score;
+        uint16 sample;
+        bool continuous = true;
+
+        for(sample = row - IMAGE_CROSS_TANGENT_HALF_WINDOW;
+            sample <= row + IMAGE_CROSS_TANGENT_HALF_WINDOW;
+            sample++)
         {
-            found = true;
-            best_col = (uint8)col;
+            if(!edge_valid[sample]
+                || edge[sample] <= IMAGE_CROSS_TANGENT_EDGE_MARGIN
+                || edge[sample] + IMAGE_CROSS_TANGENT_EDGE_MARGIN >= MT9V03X_W)
+            {
+                continuous = false;
+                break;
+            }
+        }
+        if(!continuous)
+        {
+            continue;
+        }
+
+        for(sample = row - IMAGE_CROSS_TANGENT_HALF_WINDOW;
+            sample < row + IMAGE_CROSS_TANGENT_HALF_WINDOW;
+            sample++)
+        {
+            int32 step = (int32)edge[sample + 1U] - edge[sample];
+
+            if(step < 0)
+            {
+                step = -step;
+            }
+            if(step > IMAGE_CROSS_TANGENT_MAX_STEP)
+            {
+                continuous = false;
+                break;
+            }
+        }
+        if(!continuous)
+        {
+            continue;
+        }
+
+        local_slope = ((int32)edge[row + IMAGE_CROSS_TANGENT_HALF_WINDOW]
+            - edge[row - IMAGE_CROSS_TANGENT_HALF_WINDOW])
+            * IMAGE_CROSS_SLOPE_SCALE
+            / (int32)(2U * IMAGE_CROSS_TANGENT_HALF_WINDOW);
+        repair_slope = (bottom_col - edge[row]) * IMAGE_CROSS_SLOPE_SCALE
+            / (int32)((MT9V03X_H - 1U) - row);
+        slope_difference = local_slope - repair_slope;
+        if(slope_difference < 0)
+        {
+            slope_difference = -slope_difference;
+        }
+        score = (uint16)slope_difference;
+
+        if(!tangent_found || score < best_score)
+        {
+            tangent_found = true;
+            best_score = score;
+            best_col = (uint8)edge[row];
             best_row = (uint8)row;
         }
     }
 
-    if(!found)
+    if(!tangent_found)
     {
         return false;
     }
