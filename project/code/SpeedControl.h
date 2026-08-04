@@ -3,6 +3,10 @@
 
 #include "zf_common_typedef.h"
 
+// 所有速度目标的统一硬上限，单位为“10 ms 内的编码器脉冲数”。
+// RUNNING 的实际目标仍由菜单中的 RunTarget 决定，默认值保持 210。
+#define SPEED_CONTROL_TARGET_ABS_MAX       (400)
+
 // 速度单位统一为“10 ms 内的编码器脉冲数”。
 typedef struct
 {

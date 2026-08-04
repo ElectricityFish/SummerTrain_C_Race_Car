@@ -7,6 +7,7 @@
 #include "Control.h"
 #include "Encoder.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 #include "MPU6050.h"
 #include "Kfilter.h"
 #include "Promopt.h"
@@ -39,6 +40,7 @@ int main(void)
 	motor_init();
 	encoder_init();
 	speed_control_init();
+	speed_decision_init();
 	promopt_init();										//蜂鸣器D7初始化为输出
 	wireless_uart_init();								//厂商无线串口：UART6，C6/C7，RTS为C13
 	fs_a8s_init();									//FA-A8S i-BUS：UART2，接收引脚D6
@@ -140,9 +142,9 @@ void TIM6_1ms_PIT(void)
 		encoder_right_pulse = encoder_right_get_pulse();
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
-			speed_control_set_closed_loop_target(
-				speed_running_target_pulse,
-				speed_running_target_pulse);
+			// RUNNING 下只有 SpeedDecision 可以写正式左右目标；
+			// RunTarget 同时作为外轮上限，阿克曼只按比例降低内轮。
+			speed_decision_apply(speed_running_target_pulse);
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))
 			&& speed_control_closed_loop_is_active()

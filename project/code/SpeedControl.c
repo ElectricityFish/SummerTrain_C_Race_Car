@@ -6,8 +6,6 @@
 #define SPEED_CONTROL_OUT_ABS_MAX           (6000)
 #define SPEED_CONTROL_INTEGRAL_ABS_MAX      (100000.0f)
 #define SPEED_CONTROL_KP_GAIN_SCALE         (10.0f)
-#define SPEED_CONTROL_TARGET_MIN            (-220)
-#define SPEED_CONTROL_TARGET_MAX            (220)
 
 volatile Speed_PID_t speed_left_pid;
 volatile Speed_PID_t speed_right_pid;
@@ -53,13 +51,13 @@ static int16 speed_control_float_to_int16(float value)
 
 static int16 speed_control_limit_target(int16 target)
 {
-	if(target < SPEED_CONTROL_TARGET_MIN)
+	if(target < -SPEED_CONTROL_TARGET_ABS_MAX)
 	{
-		return SPEED_CONTROL_TARGET_MIN;
+		return -SPEED_CONTROL_TARGET_ABS_MAX;
 	}
-	if(target > SPEED_CONTROL_TARGET_MAX)
+	if(target > SPEED_CONTROL_TARGET_ABS_MAX)
 	{
-		return SPEED_CONTROL_TARGET_MAX;
+		return SPEED_CONTROL_TARGET_ABS_MAX;
 	}
 	return target;
 }
@@ -138,7 +136,7 @@ void speed_control_init(void)
 	speed_right_pid.OutMax = SPEED_CONTROL_DEFAULT_OUT_MAX;
 	speed_control_reset_pid_output(&speed_right_pid);
 
-	speed_running_target_pulse = 210;
+	speed_running_target_pulse = 280;
 	speed_debug_enabled = 0U;
 	speed_debug_run = 0U;
 	speed_debug_left_enabled = 0U;

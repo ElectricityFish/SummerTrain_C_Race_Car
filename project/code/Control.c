@@ -5,6 +5,7 @@
 #include "MPU6050.h"
 #include "Motor.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 #include "ServoMotor.h"
 #include "FS-A8S.h"
 
@@ -39,6 +40,7 @@ static float control_absf(float value)
 
 static void car_state_stop_actuators(void)
 {
+	speed_decision_stop();
 	speed_control_set_closed_loop_enabled(false);
 	speed_control_debug_stop();
     motor_set_duty(0, 0);
@@ -49,6 +51,7 @@ static void car_state_stop_actuators(void)
 static void car_state_hold_zero_speed(void)
 {
 	// IDLE/PROTECT 保持速度环工作，以零目标主动抑制车轮转动。
+	speed_decision_stop();
 	speed_control_debug_stop();
 	speed_control_set_closed_loop_target(0, 0);
 	speed_control_set_closed_loop_enabled(true);
@@ -80,10 +83,8 @@ static void car_state_apply(Common_State next_state)
     if(next_state == COMMON_STATE_RUNNING)
     {
 		speed_control_debug_stop();
-		speed_control_set_closed_loop_target(
-			speed_running_target_pulse,
-			speed_running_target_pulse);
 		speed_control_set_closed_loop_enabled(true);
+		speed_decision_apply(speed_running_target_pulse);
         servo_control_set_enabled(true);
     }
     else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
@@ -254,7 +255,7 @@ void control_init(void)
     servo_pid.Ki = 0.0f;
     servo_pid.Kd = 1.45f;
     // 角速度已换算为 deg/s；0.05 是较保守的起调值，对应 100 deg/s 时修正 5 度。
-    servo_pid.Kd2 = 0.08f;
+    servo_pid.Kd2 = 0.1f;
     // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
     servo_pid.OutMax = 55.0f;
     servo_pid.OutMin = -55.0f;

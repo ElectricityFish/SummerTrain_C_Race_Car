@@ -7,6 +7,7 @@
 #include "Control.h"
 #include "Encoder.h"
 #include "SpeedControl.h"
+#include "SpeedDecision.h"
 #include "Kfilter.h"
 #include "Wireless.h"
 #include "FS-A8S.h"
@@ -311,6 +312,7 @@ void menu_init(void)
 	Menu_Item *process_folder;
 	Menu_Item *pid_folder;
 	Menu_Item *servo_pid_folder;
+	Menu_Item *ackermann_folder;
 	Menu_Item *item;
 
 	menu_pool_reset();
@@ -424,7 +426,7 @@ void menu_init(void)
 	if(speed_debug_folder != NULL)
 	{
 		create_menu_number_range_dynamic(speed_debug_folder, "RunTarget", (void *)&speed_running_target_pulse,
-			int16_Box, 0.0f, 400.0f, 10.0f);
+			int16_Box, 0.0f, (float)SPEED_CONTROL_TARGET_ABS_MAX, 10.0f);
 		create_menu_number_range_dynamic(speed_debug_folder, "DebugEnable", (void *)&speed_debug_enabled,
 			uint8_Box, 0.0f, 1.0f, 1.0f);
 		create_menu_number_range_dynamic(speed_debug_folder, "DebugRun", (void *)&speed_debug_run,
@@ -434,7 +436,8 @@ void menu_init(void)
 		if(speed_left_pid_folder != NULL)
 		{
 			create_menu_number_range_dynamic(speed_left_pid_folder, "On", (void *)&speed_debug_left_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
-			create_menu_number_range_dynamic(speed_left_pid_folder, "Target", (void *)&speed_left_pid.TargetPulse, int16_Box, -220.0f, 220.0f, 10.0f);
+			create_menu_number_range_dynamic(speed_left_pid_folder, "Target", (void *)&speed_left_pid.TargetPulse,
+				int16_Box, -(float)SPEED_CONTROL_TARGET_ABS_MAX, (float)SPEED_CONTROL_TARGET_ABS_MAX, 10.0f);
 			create_menu_number_range_dynamic(speed_left_pid_folder, "Kp", (void *)&speed_left_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
 			create_menu_number_range_dynamic(speed_left_pid_folder, "Ki", (void *)&speed_left_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 			create_menu_number_range_dynamic(speed_left_pid_folder, "MaxPWM", (void *)&speed_left_pid.OutMax, int16_Box, 0.0f, 8000.0f, 50.0f);
@@ -450,7 +453,8 @@ void menu_init(void)
 		if(speed_right_pid_folder != NULL)
 		{
 			create_menu_number_range_dynamic(speed_right_pid_folder, "On", (void *)&speed_debug_right_enabled, uint8_Box, 0.0f, 1.0f, 1.0f);
-			create_menu_number_range_dynamic(speed_right_pid_folder, "Target", (void *)&speed_right_pid.TargetPulse, int16_Box, -220.0f, 220.0f, 10.0f);
+			create_menu_number_range_dynamic(speed_right_pid_folder, "Target", (void *)&speed_right_pid.TargetPulse,
+				int16_Box, -(float)SPEED_CONTROL_TARGET_ABS_MAX, (float)SPEED_CONTROL_TARGET_ABS_MAX, 10.0f);
 			create_menu_number_range_dynamic(speed_right_pid_folder, "Kp", (void *)&speed_right_pid.Kp, float_Box, 0.0f, 10.0f, 0.01f);
 			create_menu_number_range_dynamic(speed_right_pid_folder, "Ki", (void *)&speed_right_pid.Ki, float_Box, 0.0f, 10.0f, 0.01f);
 			create_menu_number_range_dynamic(speed_right_pid_folder, "MaxPWM", (void *)&speed_right_pid.OutMax, int16_Box, 0.0f, 8000.0f, 50.0f);
@@ -459,6 +463,24 @@ void menu_init(void)
 			item = create_menu_number_dynamic(speed_right_pid_folder, "Error", (void *)&speed_right_pid.Error, float_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(speed_right_pid_folder, "Out", (void *)&speed_right_pid.Out, int16_Box);
+			if(item != NULL) item->editable = false;
+		}
+
+		ackermann_folder = create_menu_folder_dynamic(speed_debug_folder, "Ackermann");
+		if(ackermann_folder != NULL)
+		{
+			create_menu_number_range_dynamic(ackermann_folder, "Enable", (void *)&ackermann_enabled,
+				uint8_Box, 0.0f, 1.0f, 1.0f);
+			create_menu_number_range_dynamic(ackermann_folder, "Gain", (void *)&ackermann_gain,
+				float_Box, 0.0f, 1.20f, 0.05f);
+
+			item = create_menu_number_dynamic(ackermann_folder, "Base", (void *)&speed_decision_base_target_pulse, int16_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(ackermann_folder, "ServoDeg", (void *)&ackermann_servo_delta_deg, float_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(ackermann_folder, "WheelDeg", (void *)&ackermann_wheel_delta_deg, float_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(ackermann_folder, "DiffRatio", (void *)&ackermann_differential_ratio, float_Box);
 			if(item != NULL) item->editable = false;
 		}
 	}
