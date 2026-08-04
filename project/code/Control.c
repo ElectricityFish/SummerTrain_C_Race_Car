@@ -253,7 +253,7 @@ void control_init(void)
 	servo_pid.KpMax = 0.65f;
     servo_pid.ErrorFull = 35.0f;
     servo_pid.Ki = 0.0f;
-    servo_pid.Kd = 1.6f;
+    servo_pid.Kd = 0.3f;
     // 学长代码的 Kd2=0.25 作用于 gyro_raw*0.01；折算到 deg/s 后约为 0.036，先取 0.04 起调。
     // 左转横摆角速度为正，PID 中的 -Kd2*YawRate 会给出右转修正，形成负反馈。
     servo_pid.Kd2 = 0.04f;
