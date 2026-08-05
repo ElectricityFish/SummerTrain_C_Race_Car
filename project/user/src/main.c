@@ -149,17 +149,19 @@ void TIM6_1ms_PIT(void)
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
 			// RunTarget 是分配前基准；斑马线直行时直接写同速目标，
-			// 其余情况由 SpeedDecision 按图像误差分配左右目标。
+			// 其余情况由 SpeedDecision 按有符号舵机控制需求降低内轮目标。
 			if(car_race_zebra_straight_is_active())
 			{
-				// 斑马线上保持左右轮同速，不让转向误差或阿克曼逻辑产生差速。
+				// 斑马线上保持左右轮同速，绕过舵机输出差速。
 				speed_control_set_closed_loop_target(
 					speed_running_target_pulse,
 					speed_running_target_pulse);
 			}
 			else
 			{
-				speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
+				speed_decision_apply(
+					speed_running_target_pulse,
+					SERVO_CONTROL_DIRECTION * servo_pid.Out);
 			}
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))

@@ -30,8 +30,7 @@
 //初始化舵机PWM，并让车轮转到上层定义的90度直行位置
 void servomotor_init(void);
 
-// 最近一次经过机械安全边界限幅后实际下发的上层逻辑角度。
-// SpeedDecision 使用该值查找前轮等效转角。
+// 最近一次经过机械安全边界限幅后实际下发的上层逻辑角度，供状态观察与调试。
 extern volatile float servomotor_control_angle_command;
 
 //控制车辆转向角度：

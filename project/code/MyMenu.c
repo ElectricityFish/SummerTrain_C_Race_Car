@@ -469,44 +469,30 @@ void menu_init(void)
 		differential_folder = create_menu_folder_dynamic(speed_debug_folder, "Differential");
 		if(differential_folder != NULL)
 		{
-			create_menu_number_range_dynamic(differential_folder, "AckEnable", (void *)&ackermann_enabled,
+			create_menu_number_range_dynamic(differential_folder, "Enable", (void *)&steering_differential_enabled,
 				uint8_Box, 0.0f, 1.0f, 1.0f);
-			create_menu_number_range_dynamic(differential_folder, "EmpEnable", (void *)&empirical_differential_enabled,
-				uint8_Box, 0.0f, 1.0f, 1.0f);
-			create_menu_number_range_dynamic(differential_folder, "EmpReduce", (void *)&empirical_reduce_max_ratio,
-				float_Box, 0.0f, 1.00f, 0.01f);
-			create_menu_number_range_dynamic(differential_folder, "EmpPlus", (void *)&empirical_plus_max_ratio,
-				float_Box, 0.0f, 0.30f, 0.01f);
-			create_menu_number_range_dynamic(differential_folder, "InnerMin", (void *)&differential_inner_min_ratio,
-				float_Box, 0.00f, 1.00f, 0.05f);
-			create_menu_number_range_dynamic(differential_folder, "OutMax", (void *)&differential_outer_max_ratio,
-				float_Box, 1.00f, 2.00f, 0.05f);
+			create_menu_number_range_dynamic(differential_folder, "Dead", (void *)&steering_differential_deadband,
+				float_Box, 0.0f, 20.0f, 0.5f);
+			create_menu_number_range_dynamic(differential_folder, "Gain", (void *)&steering_differential_gain,
+				float_Box, 0.0f, 0.10f, 0.001f);
+			create_menu_number_range_dynamic(differential_folder, "MaxRatio", (void *)&steering_differential_max_ratio,
+				float_Box, 0.0f, 0.80f, 0.01f);
 
 			item = create_menu_number_dynamic(differential_folder, "Base", (void *)&speed_decision_base_target_pulse, int16_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "Active", (void *)&speed_decision_differential_active, uint8_Box);
 			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "ServoDeg", (void *)&ackermann_servo_delta_deg, float_Box);
+			item = create_menu_number_dynamic(differential_folder, "Demand", (void *)&speed_decision_steering_demand, float_Box);
 			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "WheelDeg", (void *)&ackermann_wheel_delta_deg, float_Box);
+			item = create_menu_number_dynamic(differential_folder, "Effective", (void *)&speed_decision_effective_demand, float_Box);
 			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "ErrorRate", (void *)&empirical_error_ratio, float_Box);
+			item = create_menu_number_dynamic(differential_folder, "Ratio", (void *)&speed_decision_differential_ratio, float_Box);
 			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "AckRatio", (void *)&ackermann_differential_ratio, float_Box);
-			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "EmpRedP", (void *)&empirical_inner_reduce_pulse, float_Box);
-			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "EmpPlusP", (void *)&empirical_outer_plus_pulse, float_Box);
-			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "LRaw", (void *)&speed_decision_left_raw_target_pulse, float_Box);
-			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "RRaw", (void *)&speed_decision_right_raw_target_pulse, float_Box);
+			item = create_menu_number_dynamic(differential_folder, "ReduceP", (void *)&speed_decision_inner_reduce_pulse, float_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "LTarget", (void *)&speed_decision_left_target_pulse, int16_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "RTarget", (void *)&speed_decision_right_target_pulse, int16_Box);
-			if(item != NULL) item->editable = false;
-			item = create_menu_number_dynamic(differential_folder, "ErrorPx", (void *)&ackermann_pixel_error_abs, float_Box);
 			if(item != NULL) item->editable = false;
 		}
 	}

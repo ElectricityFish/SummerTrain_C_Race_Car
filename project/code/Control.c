@@ -96,7 +96,9 @@ static void car_state_apply(Common_State next_state)
 		car_race_finished_latched = false;
 		speed_control_debug_stop();
 		speed_control_set_closed_loop_enabled(true);
-		speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
+		speed_decision_apply(
+			speed_running_target_pulse,
+			SERVO_CONTROL_DIRECTION * servo_pid.Out);
         servo_control_set_enabled(true);
     }
     else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
