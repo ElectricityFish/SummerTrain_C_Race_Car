@@ -2085,6 +2085,12 @@
         <file>
             <name>$PROJ_DIR$\..\..\code\本文件夹作用.txt</name>
         </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\SpeedTuneSerial.c</name>
+        </file>
+        <file>
+            <name>$PROJ_DIR$\..\..\code\SpeedTuneSerial.h</name>
+        </file>
     </group>
     <group>
         <name>components_fatfs</name>

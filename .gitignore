@@ -2,6 +2,8 @@
 *.xcl
 *.dep
 *.ps1
+!tools/speed_tune_com11.ps1
+tools/speed_tune_logs/
 *.cspy.bat
 *.out
 *.map

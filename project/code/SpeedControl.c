@@ -2,6 +2,8 @@
 
 #include <stddef.h>
 
+#include "zf_common_interrupt.h"
+
 #define SPEED_CONTROL_DEFAULT_OUT_MAX       (6000)
 #define SPEED_CONTROL_OUT_ABS_MAX           (8000)
 #define SPEED_CONTROL_INTEGRAL_ABS_MAX      (100000.0f)
@@ -253,4 +255,86 @@ void speed_control_debug_stop(void)
 {
 	speed_debug_run = 0U;
 	speed_control_reset_pid();
+}
+
+bool speed_control_tune_start(const Speed_Tune_Config_t *config)
+{
+	uint32 primask;
+
+	if(config == NULL
+		|| config->left_kp < 0.0f || config->left_kp > 10.0f
+		|| config->left_ki < 0.0f || config->left_ki > 10.0f
+		|| config->right_kp < 0.0f || config->right_kp > 10.0f
+		|| config->right_ki < 0.0f || config->right_ki > 10.0f
+		|| config->left_target < 0 || config->left_target > SPEED_CONTROL_RUN_TARGET_MAX
+		|| config->right_target < 0 || config->right_target > SPEED_CONTROL_RUN_TARGET_MAX
+		|| config->left_out_max < 0 || config->left_out_max > SPEED_CONTROL_OUT_ABS_MAX
+		|| config->right_out_max < 0 || config->right_out_max > SPEED_CONTROL_OUT_ABS_MAX)
+	{
+		return false;
+	}
+
+	primask = interrupt_global_disable();
+	speed_control_closed_loop_enabled = 0U;
+	speed_debug_run = 0U;
+	speed_left_pid.Kp = config->left_kp;
+	speed_left_pid.Ki = config->left_ki;
+	speed_left_pid.OutMax = config->left_out_max;
+	speed_right_pid.Kp = config->right_kp;
+	speed_right_pid.Ki = config->right_ki;
+	speed_right_pid.OutMax = config->right_out_max;
+	speed_control_reset_pid_output(&speed_left_pid);
+	speed_control_reset_pid_output(&speed_right_pid);
+	speed_left_pid.TargetPulse = config->left_target;
+	speed_right_pid.TargetPulse = config->right_target;
+	speed_debug_enabled = 1U;
+	speed_debug_left_enabled = 1U;
+	speed_debug_right_enabled = 1U;
+	// 最后置运行标志，确保 10 ms 中断看不到半套配置。
+	speed_debug_run = 1U;
+	interrupt_global_enable(primask);
+	return true;
+}
+
+void speed_control_tune_stop(void)
+{
+	uint32 primask = interrupt_global_disable();
+
+	speed_debug_run = 0U;
+	speed_debug_left_enabled = 0U;
+	speed_debug_right_enabled = 0U;
+	speed_debug_enabled = 0U;
+	speed_left_pid.TargetPulse = 0;
+	speed_right_pid.TargetPulse = 0;
+	speed_control_reset_pid_output(&speed_left_pid);
+	speed_control_reset_pid_output(&speed_right_pid);
+	speed_control_closed_loop_enabled = 0U;
+	interrupt_global_enable(primask);
+}
+
+void speed_control_tune_get_snapshot(Speed_Tune_Snapshot_t *snapshot)
+{
+	uint32 primask;
+
+	if(snapshot == NULL)
+	{
+		return;
+	}
+
+	primask = interrupt_global_disable();
+	snapshot->left_target = speed_left_pid.TargetPulse;
+	snapshot->left_actual = speed_left_pid.ActualPulse;
+	snapshot->left_out = speed_left_pid.Out;
+	snapshot->left_error = speed_control_float_to_int16(speed_control_limit_float(
+		speed_left_pid.Error, -32767.0f, 32767.0f));
+	snapshot->left_i_out = speed_control_float_to_int16(speed_control_limit_float(
+		speed_left_pid.IOut, -32767.0f, 32767.0f));
+	snapshot->right_target = speed_right_pid.TargetPulse;
+	snapshot->right_actual = speed_right_pid.ActualPulse;
+	snapshot->right_out = speed_right_pid.Out;
+	snapshot->right_error = speed_control_float_to_int16(speed_control_limit_float(
+		speed_right_pid.Error, -32767.0f, 32767.0f));
+	snapshot->right_i_out = speed_control_float_to_int16(speed_control_limit_float(
+		speed_right_pid.IOut, -32767.0f, 32767.0f));
+	interrupt_global_enable(primask);
 }

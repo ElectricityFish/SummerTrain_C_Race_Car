@@ -60,25 +60,34 @@ static void car_state_hold_zero_speed(void)
 	servomotor_disable();
 }
 
-static bool wireless_control_ch5_permitted(void)
+bool control_remote_kill_permitted(void)
 {
-    return (fs_a8s_channel_data.channel[4] >= WIRELESS_SWITCH_HIGH_MIN);
+    return fs_a8s_is_online()
+        && (fs_a8s_channel_data.channel[4] >= WIRELESS_SWITCH_HIGH_MIN);
+}
+
+bool control_remote_kill_released(void)
+{
+    return fs_a8s_is_online()
+        && (fs_a8s_channel_data.channel[4] <= WIRELESS_SWITCH_LOW_MAX);
 }
 
 bool wireless_control_actuators_permitted(void)
 {
     return (wireless_control_enabled != 0U)
-        && fs_a8s_is_online()
-        && wireless_control_ch5_permitted();
+        && control_remote_kill_permitted();
 }
 
 static void car_state_apply(Common_State next_state)
 {
+    Common_State previous_state;
+
     if(common_state == next_state)
     {
         return;
     }
 
+    previous_state = common_state;
     common_state = next_state;
     if(next_state == COMMON_STATE_RUNNING)
     {
@@ -87,14 +96,61 @@ static void car_state_apply(Common_State next_state)
 		speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
         servo_control_set_enabled(true);
     }
+    else if(next_state == COMMON_STATE_SPEED_TUNE)
+    {
+		speed_decision_stop();
+		speed_control_set_closed_loop_enabled(false);
+		motor_set_duty(0, 0);
+		servo_control_set_enabled(false);
+		// 地面调速时必须持续给舵机中位脉冲，避免前轮失去保持力。
+		servomotor_set_angle(SERVOMOTOR_CONTROL_CENTER_ANGLE);
+    }
     else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
     {
-		car_state_hold_zero_speed();
+		// 调速结束或保护触发时直接断 PWM 滑行，避免零目标 PI 产生反向制动。
+		if(previous_state == COMMON_STATE_SPEED_TUNE)
+		{
+			car_state_stop_actuators();
+		}
+		else
+		{
+			car_state_hold_zero_speed();
+		}
     }
     else
     {
         car_state_stop_actuators();
     }
+}
+
+bool control_speed_tune_enter(void)
+{
+    if((common_state != COMMON_STATE_IDLE)
+        || (car_protection_active_reason != CAR_PROTECTION_REASON_NONE)
+        || (wireless_control_enabled != 0U)
+        || !control_remote_kill_permitted())
+    {
+        return false;
+    }
+
+    car_go_command = 0U;
+    car_protection_reason = CAR_PROTECTION_REASON_NONE;
+    car_state_apply(COMMON_STATE_SPEED_TUNE);
+    return true;
+}
+
+void control_speed_tune_exit(void)
+{
+    if(common_state == COMMON_STATE_SPEED_TUNE)
+    {
+        car_go_command = 0U;
+        car_state_apply(COMMON_STATE_IDLE);
+    }
+}
+
+bool control_speed_tune_is_active(void)
+{
+    return (common_state == COMMON_STATE_SPEED_TUNE);
 }
 
 static void car_state_process_base_command(void)
@@ -290,7 +346,7 @@ void car_state_command_task(void)
 
 void car_protection_check_attitude(void)
 {
-    // IDLE 下不做保护触发，也不保留上一次运行留下的实时故障状态。
+    // 普通 IDLE 下不做保护；临时 SPEED_TUNE 是实际地面行驶，必须保留姿态保护。
     if(common_state == COMMON_STATE_IDLE)
     {
         car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_ATTITUDE;
@@ -301,7 +357,9 @@ void car_protection_check_attitude(void)
         || (control_absf(roll) > CAR_PROTECTION_ANGLE_LIMIT_DEG))
     {
         car_protection_active_reason |= CAR_PROTECTION_REASON_ATTITUDE;
-        if(common_state == COMMON_STATE_RUNNING || common_state == COMMON_STATE_PLAY)
+        if(common_state == COMMON_STATE_RUNNING
+            || common_state == COMMON_STATE_PLAY
+            || common_state == COMMON_STATE_SPEED_TUNE)
         {
             car_state_enter_protect(CAR_PROTECTION_REASON_ATTITUDE);
         }

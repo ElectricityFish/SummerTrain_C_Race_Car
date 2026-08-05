@@ -480,6 +480,16 @@
               <FilePath>..\code\SpeedControl.h</FilePath>
             </File>
             <File>
+              <FileName>SpeedTuneSerial.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\code\SpeedTuneSerial.c</FilePath>
+            </File>
+            <File>
+              <FileName>SpeedTuneSerial.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\code\SpeedTuneSerial.h</FilePath>
+            </File>
+            <File>
               <FileName>SpeedDecision.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\code\SpeedDecision.c</FilePath>

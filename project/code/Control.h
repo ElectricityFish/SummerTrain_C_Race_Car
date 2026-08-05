@@ -9,7 +9,9 @@ typedef enum
 	COMMON_STATE_IDLE = 0,
 	COMMON_STATE_RUNNING,
 	COMMON_STATE_PLAY,
-	COMMON_STATE_PROTECT
+	COMMON_STATE_PROTECT,
+	// 仅供当前调试分支使用：串口直接控制左右速度目标，舵机保持中位。
+	COMMON_STATE_SPEED_TUNE
 } Common_State;
 
 // 保护原因可以组合并锁存，供菜单显示和故障定位使用。
@@ -43,6 +45,16 @@ void car_state_command_task(void);
 
 // 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
 bool wireless_control_actuators_permitted(void);
+
+// CH5 独立急停联锁，不依赖 Wireless_Control/Enable。
+// 调试发车要求接收机在线且 CH5 高；重新 ARM 前要求在线且 CH5 低。
+bool control_remote_kill_permitted(void);
+bool control_remote_kill_released(void);
+
+// 临时速度环串口调试状态入口。进入时舵机保持中位；退出时电机直接断 PWM 滑行。
+bool control_speed_tune_enter(void);
+void control_speed_tune_exit(void);
+bool control_speed_tune_is_active(void);
 
 // PLAY 状态下按 CH1/CH3 刷新舵机和双电机输出；由 20ms 执行器任务调用。
 void wireless_control_play_task(void);

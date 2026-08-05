@@ -13,6 +13,7 @@
 #include "Promopt.h"
 #include "Wireless.h"
 #include "FS-A8S.h"
+#include "SpeedTuneSerial.h"
 
 
 uint8_t send_flag = 0;
@@ -68,6 +69,7 @@ int main(void)
 	interrupt_set_priority(MT9V03X_VSYNC_IRQN, 1);
 	image_process_init();
 	control_init();
+	speed_tune_serial_init();
 	menu_init();
 	menu_show();									//显示初始菜单
 	
@@ -76,18 +78,27 @@ int main(void)
 	
 	while(1)
 	{
+		// 临时调速协议优先处理，减少 UART6 的 64 字节接收 FIFO 堵塞风险。
+		speed_tune_serial_task();
 		
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
-			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
-			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
-			image_process_frame();
-			wireless_image_send_task();
+			// 调速时不需要视觉，释放主循环时间给 100 Hz 遥测，DMA 接收仍保持正常轮转。
+			if(common_state != COMMON_STATE_SPEED_TUNE)
+			{
+				//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
+				wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
+				image_process_frame();
+				wireless_image_send_task();
+			}
 		}
 		
 		car_state_command_task();
-		menu_show();								//仅在内容变化时才真正刷新
+		if(common_state != COMMON_STATE_SPEED_TUNE)
+		{
+			menu_show();							//仅在内容变化时才真正刷新
+		}
 		
 		//运行时进行无线调参
 		if(common_state == COMMON_STATE_RUNNING&&send_flag == 1)
@@ -135,6 +146,7 @@ void TIM6_1ms_PIT(void)
 	count++;
 	image_fps_1ms_task();							//每1ms计时，按1秒窗口统计实际采集帧率
 	fs_a8s_1ms_task();							//i-BUS 最后有效帧超时计时
+	speed_tune_serial_1ms_task();				//COM11 心跳、CH5 与定时停止联锁
 	promopt_tick();
 	if(count1>=10)									// 每10ms进行一次姿态解算
 	{
@@ -162,6 +174,7 @@ void TIM6_1ms_PIT(void)
 			speed_control_set_closed_loop_target(0, 0);
 		}
 		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
+		speed_tune_serial_10ms_task();			//PI 更新完成后再保存同一时刻的调速遥测
 		count=0;
 		
 		send_flag = 1;
@@ -183,6 +196,21 @@ void TIM8_1ms_PIT(void)
 		motor_set_duty(0, 0);
 		servomotor_disable();
 		count = 0;
+		return;
+	}
+
+	// 串口调速状态下 CH5 是独立硬许可；任何软件状态不一致都直接断 PWM。
+	if(common_state == COMMON_STATE_SPEED_TUNE)
+	{
+		if(!control_remote_kill_permitted() || !speed_tune_serial_is_running())
+		{
+			motor_set_duty(0, 0);
+			count = 0U;
+			return;
+		}
+		speed_control_debug_get_duty(&speed_left_duty, &speed_right_duty);
+		motor_set_duty(speed_left_duty, speed_right_duty);
+		count = 0U;
 		return;
 	}
 

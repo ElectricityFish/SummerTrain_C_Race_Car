@@ -24,6 +24,33 @@ typedef struct
 	int16 OutMax;
 } Speed_PID_t;
 
+// 临时串口调速使用的原子配置；当前地面测试只允许非负目标。
+typedef struct
+{
+	float left_kp;
+	float left_ki;
+	float right_kp;
+	float right_ki;
+	int16 left_target;
+	int16 right_target;
+	int16 left_out_max;
+	int16 right_out_max;
+} Speed_Tune_Config_t;
+
+typedef struct
+{
+	int16 left_target;
+	int16 left_actual;
+	int16 left_out;
+	int16 left_error;
+	int16 left_i_out;
+	int16 right_target;
+	int16 right_actual;
+	int16 right_out;
+	int16 right_error;
+	int16 right_i_out;
+} Speed_Tune_Snapshot_t;
+
 extern volatile Speed_PID_t speed_left_pid;
 extern volatile Speed_PID_t speed_right_pid;
 
@@ -48,5 +75,10 @@ void speed_control_reset_pid(void);
 bool speed_control_debug_is_active(void);
 void speed_control_debug_get_duty(int16 *left_duty, int16 *right_duty);
 void speed_control_debug_stop(void);
+
+// 仅供临时串口调试状态使用。start 一次性提交全部参数，stop 直接清零输出。
+bool speed_control_tune_start(const Speed_Tune_Config_t *config);
+void speed_control_tune_stop(void);
+void speed_control_tune_get_snapshot(Speed_Tune_Snapshot_t *snapshot);
 
 #endif
