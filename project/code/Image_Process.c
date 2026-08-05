@@ -7,7 +7,8 @@
 
 // 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
 #define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
-#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (10U)
+#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (20U)
+#define IMAGE_OUT_BOUND_CONFIRM_FRAMES        (3U)
 
 // 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
 #define IMAGE_ZEBRA_SAMPLE_ROWS               (3U)
@@ -69,6 +70,7 @@ static bool image_has_last_mid;
 static bool image_new_result;
 static uint8 image_bottom_white_ratio;
 static bool image_out_of_bounds;
+static uint8 image_out_of_bounds_confirm_count;
 static bool image_zebra_detected;
 static uint8 image_zebra_missed_count;
 static image_cross_state_enum image_cross_state;
@@ -320,7 +322,8 @@ static void image_process_detect_zebra(const uint8 image[][MT9V03X_W])
     }
 }
 
-// 最底行白色不足表示车辆已经离开白色赛道。比例只用于显示，判定使用交叉相乘避免除法误差。
+// 最底行连续三帧白色不足才确认离开赛道，过滤弯道、模糊等造成的单帧异常。
+// 比例只用于显示，判定使用交叉相乘避免除法误差。
 static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
 {
     uint8 white_threshold = image_process_get_feature_white_threshold();
@@ -336,9 +339,22 @@ static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
     }
 
     image_bottom_white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
-    image_out_of_bounds = !image_zebra_detected
-        && ((uint32)white_count * 100U
-            < (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN);
+    if(image_zebra_detected
+        || ((uint32)white_count * 100U
+            >= (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN))
+    {
+        // 斑马线优先级最高；任意一帧恢复正常也会打断连续出界计数。
+        image_out_of_bounds_confirm_count = 0U;
+        image_out_of_bounds = false;
+        return;
+    }
+
+    if(image_out_of_bounds_confirm_count < IMAGE_OUT_BOUND_CONFIRM_FRAMES)
+    {
+        image_out_of_bounds_confirm_count++;
+    }
+    image_out_of_bounds =
+        (image_out_of_bounds_confirm_count >= IMAGE_OUT_BOUND_CONFIRM_FRAMES);
 }
 
 // 返回从图像底部连续向上保持白色的距离。数值越大，说明该列越像赛道内部。
@@ -988,6 +1004,7 @@ void image_process_init(void)
     image_new_result = false;
     image_bottom_white_ratio = 100U;
     image_out_of_bounds = false;
+    image_out_of_bounds_confirm_count = 0U;
     image_zebra_detected = false;
     image_zebra_missed_count = 0U;
     image_cross_state = IMAGE_CROSS_STATE_NONE;
