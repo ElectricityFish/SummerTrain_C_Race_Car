@@ -426,7 +426,7 @@ void menu_init(void)
 	if(speed_debug_folder != NULL)
 	{
 		create_menu_number_range_dynamic(speed_debug_folder, "RunTarget", (void *)&speed_running_target_pulse,
-			int16_Box, 0.0f, (float)SPEED_CONTROL_RUN_TARGET_MAX, 10.0f);
+			int16_Box, 0.0f, (float)SPEED_CONTROL_RUN_TARGET_MAX, 5.0f);
 		create_menu_number_range_dynamic(speed_debug_folder, "DebugEnable", (void *)&speed_debug_enabled,
 			uint8_Box, 0.0f, 1.0f, 1.0f);
 		create_menu_number_range_dynamic(speed_debug_folder, "DebugRun", (void *)&speed_debug_run,
@@ -476,7 +476,7 @@ void menu_init(void)
 			create_menu_number_range_dynamic(differential_folder, "EmpReduce", (void *)&empirical_reduce_max_ratio,
 				float_Box, 0.0f, 2.00f, 0.01f);
 			create_menu_number_range_dynamic(differential_folder, "EmpPlus", (void *)&empirical_plus_max_ratio,
-				float_Box, 0.0f, 0.30f, 0.01f);
+				float_Box, 0.0f, 1.00f, 0.01f);
 			create_menu_number_range_dynamic(differential_folder, "InnerMin", (void *)&differential_inner_min_ratio,
 				float_Box, -1.00f, 1.00f, 0.05f);
 			create_menu_number_range_dynamic(differential_folder, "OutMax", (void *)&differential_outer_max_ratio,

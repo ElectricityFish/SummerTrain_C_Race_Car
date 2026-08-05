@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 #define SPEED_CONTROL_DEFAULT_OUT_MAX       (6000)
-#define SPEED_CONTROL_OUT_ABS_MAX           (6000)
+#define SPEED_CONTROL_OUT_ABS_MAX           (8000)
 #define SPEED_CONTROL_INTEGRAL_ABS_MAX      (100000.0f)
 #define SPEED_CONTROL_KP_GAIN_SCALE         (10.0f)
 
@@ -136,7 +136,7 @@ void speed_control_init(void)
 	speed_right_pid.OutMax = SPEED_CONTROL_DEFAULT_OUT_MAX;
 	speed_control_reset_pid_output(&speed_right_pid);
 
-	speed_running_target_pulse = 340;
+	speed_running_target_pulse = 350;
 	speed_debug_enabled = 0U;
 	speed_debug_run = 0U;
 	speed_debug_left_enabled = 0U;
