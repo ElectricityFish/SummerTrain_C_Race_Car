@@ -9,7 +9,7 @@
 #define ACKERMANN_DEG_TO_RAD               (0.0174532925f)
 #define DIFFERENTIAL_ERROR_DEADZONE_PX     (10.0f)
 #define EMPIRICAL_ERROR_FULL_PX             (20.0f)
-#define EMPIRICAL_REDUCE_RATIO_MAX         (1.00f)
+#define EMPIRICAL_REDUCE_RATIO_MAX         (2.00f)
 #define EMPIRICAL_PLUS_RATIO_MAX           (0.30f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MIN   (1.00f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MAX   (2.00f)
@@ -149,7 +149,7 @@ void speed_decision_init(void)
 	empirical_differential_enabled = 1U;
 	empirical_reduce_max_ratio = 0.75f;
 	empirical_plus_max_ratio = 0.00f;
-	differential_inner_min_ratio = 0.00f;
+	differential_inner_min_ratio = -1.00f;
 	differential_outer_max_ratio = 1.30f;
 	speed_decision_stop();
 }
@@ -256,8 +256,8 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 
 	// RunTarget 是分配前的基准速度。外轮允许加速到 RunTarget * OutMax；
 	// 只有组合目标超过该上限时才等比例缩放，避免破坏内外轮比例。
-	left_target = speed_decision_maxf(0.0f, left_raw_target);
-	right_target = speed_decision_maxf(0.0f, right_raw_target);
+	left_target = left_raw_target;
+	right_target = right_raw_target;
 	outer_max_ratio = speed_decision_limitf(
 		differential_outer_max_ratio,
 		DIFFERENTIAL_OUTER_MAX_RATIO_MIN,
@@ -268,23 +268,27 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 	left_target /= scale;
 	right_target /= scale;
 
-	// 最终安全下限只约束当前转向的内轮，第一版不允许内轮反转。
+	// 最终负下限只约束当前转向的内轮；外轮仍保持非负。
+	// InnerMin=-1 时，内轮最低允许反转到 -RunTarget。
 	inner_min_ratio = speed_decision_limitf(
 		differential_inner_min_ratio,
-		0.0f,
+		-1.0f,
 		1.0f);
 	inner_min_target = base_target_float * inner_min_ratio;
 	if(steering_error_px > 0.0f)
 	{
-		left_target = speed_decision_maxf(left_target, inner_min_target);
+		left_target = speed_decision_limitf(
+			left_target, inner_min_target, outer_max_target);
+		right_target = speed_decision_limitf(
+			right_target, 0.0f, outer_max_target);
 	}
 	else if(steering_error_px < 0.0f)
 	{
-		right_target = speed_decision_maxf(right_target, inner_min_target);
+		right_target = speed_decision_limitf(
+			right_target, inner_min_target, outer_max_target);
+		left_target = speed_decision_limitf(
+			left_target, 0.0f, outer_max_target);
 	}
-
-	left_target = speed_decision_limitf(left_target, 0.0f, outer_max_target);
-	right_target = speed_decision_limitf(right_target, 0.0f, outer_max_target);
 	speed_decision_left_target_pulse = speed_decision_float_to_int16(left_target);
 	speed_decision_right_target_pulse = speed_decision_float_to_int16(right_target);
 
