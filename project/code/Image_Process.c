@@ -7,7 +7,20 @@
 
 // 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
 #define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
-#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (60U)
+#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (45U)
+
+// 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
+#define IMAGE_ZEBRA_SAMPLE_ROWS               (3U)
+#define IMAGE_ZEBRA_SAMPLE_ROW_STEP           (5U)
+#define IMAGE_ZEBRA_VALID_ROWS_MIN            (2U)
+#define IMAGE_ZEBRA_WHITE_RATIO_MIN           (25U)
+#define IMAGE_ZEBRA_WHITE_RATIO_MAX           (75U)
+#define IMAGE_ZEBRA_TRANSITIONS_MIN           (10U)
+#define IMAGE_ZEBRA_RUN_WIDTH_MIN             (4U)
+#define IMAGE_ZEBRA_BLACK_RUNS_MIN            (5U)
+#define IMAGE_ZEBRA_WHITE_RUNS_MIN            (5U)
+#define IMAGE_ZEBRA_FILTER_RADIUS             (2U)
+#define IMAGE_ZEBRA_HOLD_MISSED_FRAMES        (2U)
 
 // 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
 #define IMAGE_CROSS_ROI_TOP                 (12U)
@@ -56,6 +69,8 @@ static bool image_has_last_mid;
 static bool image_new_result;
 static uint8 image_bottom_white_ratio;
 static bool image_out_of_bounds;
+static bool image_zebra_detected;
+static uint8 image_zebra_missed_count;
 static image_cross_state_enum image_cross_state;
 static uint8 image_cross_left_col;
 static uint8 image_cross_left_row;
@@ -163,17 +178,154 @@ static void image_process_calculate_threshold(const uint8 image[][MT9V03X_W])
         255U);
 }
 
+static uint8 image_process_get_feature_white_threshold(void)
+{
+    return (image_white_min < IMAGE_OUT_BOUND_WHITE_GRAY_MIN)
+        ? IMAGE_OUT_BOUND_WHITE_GRAY_MIN
+        : image_white_min;
+}
+
+// 对横向5像素窗口作多数表决，消除单像素和双像素噪点后再统计条纹。
+static bool image_process_zebra_pixel_is_white(
+    const uint8 image[][MT9V03X_W],
+    uint8 row,
+    uint16 col,
+    uint8 white_threshold)
+{
+    uint16 start_col = (col > IMAGE_ZEBRA_FILTER_RADIUS)
+        ? col - IMAGE_ZEBRA_FILTER_RADIUS
+        : 0U;
+    uint16 end_col = col + IMAGE_ZEBRA_FILTER_RADIUS;
+    uint8 white_count = 0U;
+    uint8 sample_count = 0U;
+    uint16 sample_col;
+
+    if(end_col >= MT9V03X_W)
+    {
+        end_col = MT9V03X_W - 1U;
+    }
+
+    for(sample_col = start_col; sample_col <= end_col; sample_col++)
+    {
+        if(image[row][sample_col] >= white_threshold)
+        {
+            white_count++;
+        }
+        sample_count++;
+    }
+
+    return ((uint16)white_count * 2U >= (uint16)sample_count + 1U);
+}
+
+static bool image_process_zebra_row_is_valid(
+    const uint8 image[][MT9V03X_W],
+    uint8 row,
+    uint8 white_threshold)
+{
+    bool last_white = image_process_zebra_pixel_is_white(image, row, 0U, white_threshold);
+    uint16 white_count = last_white ? 1U : 0U;
+    uint16 run_width = 1U;
+    uint8 transition_count = 0U;
+    uint8 black_run_count = 0U;
+    uint8 white_run_count = 0U;
+    uint16 col;
+
+    for(col = 1U; col < MT9V03X_W; col++)
+    {
+        bool current_white = image_process_zebra_pixel_is_white(
+            image,
+            row,
+            col,
+            white_threshold);
+
+        if(current_white)
+        {
+            white_count++;
+        }
+
+        if(current_white == last_white)
+        {
+            run_width++;
+            continue;
+        }
+
+        transition_count++;
+        if(run_width >= IMAGE_ZEBRA_RUN_WIDTH_MIN)
+        {
+            if(last_white)
+            {
+                white_run_count++;
+            }
+            else
+            {
+                black_run_count++;
+            }
+        }
+        last_white = current_white;
+        run_width = 1U;
+    }
+
+    if(run_width >= IMAGE_ZEBRA_RUN_WIDTH_MIN)
+    {
+        if(last_white)
+        {
+            white_run_count++;
+        }
+        else
+        {
+            black_run_count++;
+        }
+    }
+
+    return ((uint32)white_count * 100U
+            >= (uint32)MT9V03X_W * IMAGE_ZEBRA_WHITE_RATIO_MIN)
+        && ((uint32)white_count * 100U
+            <= (uint32)MT9V03X_W * IMAGE_ZEBRA_WHITE_RATIO_MAX)
+        && (transition_count >= IMAGE_ZEBRA_TRANSITIONS_MIN)
+        && (black_run_count >= IMAGE_ZEBRA_BLACK_RUNS_MIN)
+        && (white_run_count >= IMAGE_ZEBRA_WHITE_RUNS_MIN);
+}
+
+static void image_process_detect_zebra(const uint8 image[][MT9V03X_W])
+{
+    uint8 white_threshold = image_process_get_feature_white_threshold();
+    uint8 valid_rows = 0U;
+    uint8 sample;
+
+    for(sample = 0U; sample < IMAGE_ZEBRA_SAMPLE_ROWS; sample++)
+    {
+        uint8 row = MT9V03X_H - 1U - sample * IMAGE_ZEBRA_SAMPLE_ROW_STEP;
+
+        if(image_process_zebra_row_is_valid(image, row, white_threshold))
+        {
+            valid_rows++;
+        }
+    }
+
+    if(valid_rows >= IMAGE_ZEBRA_VALID_ROWS_MIN)
+    {
+        image_zebra_detected = true;
+        image_zebra_missed_count = 0U;
+    }
+    else if(image_zebra_detected
+        && image_zebra_missed_count < IMAGE_ZEBRA_HOLD_MISSED_FRAMES)
+    {
+        // 短暂漏检时继续保持斑马线优先，避免同一条斑马线中途误触发出界保护。
+        image_zebra_missed_count++;
+    }
+    else
+    {
+        image_zebra_detected = false;
+        image_zebra_missed_count = 0U;
+    }
+}
+
 // 最底行白色不足表示车辆已经离开白色赛道。比例只用于显示，判定使用交叉相乘避免除法误差。
 static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
 {
-    uint8 white_threshold = image_white_min;
+    uint8 white_threshold = image_process_get_feature_white_threshold();
     uint16 white_count = 0U;
     uint16 col;
-
-    if(white_threshold < IMAGE_OUT_BOUND_WHITE_GRAY_MIN)
-    {
-        white_threshold = IMAGE_OUT_BOUND_WHITE_GRAY_MIN;
-    }
 
     for(col = 0U; col < MT9V03X_W; col++)
     {
@@ -184,8 +336,9 @@ static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
     }
 
     image_bottom_white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
-    image_out_of_bounds = ((uint32)white_count * 100U
-        < (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN);
+    image_out_of_bounds = !image_zebra_detected
+        && ((uint32)white_count * 100U
+            < (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN);
 }
 
 // 返回从图像底部连续向上保持白色的距离。数值越大，说明该列越像赛道内部。
@@ -835,6 +988,8 @@ void image_process_init(void)
     image_new_result = false;
     image_bottom_white_ratio = 100U;
     image_out_of_bounds = false;
+    image_zebra_detected = false;
+    image_zebra_missed_count = 0U;
     image_cross_state = IMAGE_CROSS_STATE_NONE;
     image_cross_left_col = 0U;
     image_cross_left_row = 0U;
@@ -851,6 +1006,7 @@ void image_process_frame(void)
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
 
     image_process_calculate_threshold(image);
+    image_process_detect_zebra(image);
     image_process_detect_out_of_bounds(image);
     image_process_find_reference_col(image);
     image_process_track_edges(image);
@@ -929,6 +1085,8 @@ void image_process_display(void)
     ips200_show_string(64U, 224U, "%");
     ips200_show_string(72U, 224U, "OUT:");
     ips200_show_string(112U, 224U, image_out_of_bounds ? "YES" : "NO ");
+    ips200_show_string(0U, 240U, "ZEBRA:");
+    ips200_show_string(56U, 240U, image_zebra_detected ? "YES" : "NO ");
 }
 
 bool image_process_take_new_result(void)
@@ -975,6 +1133,11 @@ uint8 image_process_get_bottom_white_ratio(void)
 bool image_process_is_out_of_bounds(void)
 {
     return image_out_of_bounds;
+}
+
+bool image_process_is_zebra_detected(void)
+{
+    return image_zebra_detected;
 }
 
 image_cross_state_enum image_process_get_cross_state(void)

@@ -59,6 +59,9 @@ uint8 image_process_get_white_max(void);
 uint8 image_process_get_bottom_white_ratio(void);
 bool image_process_is_out_of_bounds(void);
 
+// 斑马线由底部多行规则黑白条纹确认，并在图像层优先于出界判定。
+bool image_process_is_zebra_detected(void);
+
 // 返回当前十字识别状态，以及用于补线控制和调试显示的左上、右上拐点。
 image_cross_state_enum image_process_get_cross_state(void);
 bool image_process_get_cross_corners(

@@ -79,6 +79,7 @@ int main(void)
 			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
 			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
+			car_race_process_zebra(image_process_is_zebra_detected());
 			if(image_process_is_out_of_bounds())
 			{
 				// 只锁存出界原因并进入现有 Protect；不修改 RunCmd，避免同一循环立即退出保护。
@@ -147,10 +148,19 @@ void TIM6_1ms_PIT(void)
 		encoder_right_pulse = encoder_right_get_pulse();
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
-			// RUNNING 下只有 SpeedDecision 可以写正式左右目标；
-			// RunTarget 是分配前基准；默认由图像误差经验差速分配左右目标，
-			// 阿克曼仅保留为可选 A/B 对照开关。
-			speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
+			// RunTarget 是分配前基准；斑马线直行时直接写同速目标，
+			// 其余情况由 SpeedDecision 按图像误差分配左右目标。
+			if(car_race_zebra_straight_is_active())
+			{
+				// 斑马线上保持左右轮同速，不让转向误差或阿克曼逻辑产生差速。
+				speed_control_set_closed_loop_target(
+					speed_running_target_pulse,
+					speed_running_target_pulse);
+			}
+			else
+			{
+				speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
+			}
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))
 			&& speed_control_closed_loop_is_active()

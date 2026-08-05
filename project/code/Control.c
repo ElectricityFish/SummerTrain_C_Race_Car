@@ -20,6 +20,11 @@ volatile bool servo_control_enabled;
 
 static uint8 car_protection_active_reason;
 static uint8 wireless_control_enabled_last;
+static volatile uint8 car_zebra_pass_count;
+static volatile bool car_zebra_straight_active;
+static bool car_zebra_event_latched;
+static uint8 car_zebra_absent_frames;
+static bool car_race_finished_latched;
 
 #define WIRELESS_SWITCH_LOW_MAX             (1250U)
 #define WIRELESS_SWITCH_HIGH_MIN            (1750U)
@@ -32,6 +37,7 @@ static uint8 wireless_control_enabled_last;
 #define WIRELESS_STEER_LEFT_END             (1485U)
 #define WIRELESS_STEER_RIGHT_START          (1515U)
 #define WIRELESS_STEER_CHANNEL_MAX          (2000U)
+#define CAR_ZEBRA_REARM_ABSENT_FRAMES       (3U)
 
 static float control_absf(float value)
 {
@@ -82,6 +88,12 @@ static void car_state_apply(Common_State next_state)
     common_state = next_state;
     if(next_state == COMMON_STATE_RUNNING)
     {
+		// 每次从 IDLE 重新发车都开始一场新比赛，并重新统计起点/终点斑马线。
+		car_zebra_pass_count = 0U;
+		car_zebra_straight_active = false;
+		car_zebra_event_latched = false;
+		car_zebra_absent_frames = 0U;
+		car_race_finished_latched = false;
 		speed_control_debug_stop();
 		speed_control_set_closed_loop_enabled(true);
 		speed_decision_apply(speed_running_target_pulse, servo_pid.Error0);
@@ -89,6 +101,7 @@ static void car_state_apply(Common_State next_state)
     }
     else if((next_state == COMMON_STATE_IDLE) || (next_state == COMMON_STATE_PROTECT))
     {
+		car_zebra_straight_active = false;
 		car_state_hold_zero_speed();
     }
     else
@@ -101,6 +114,8 @@ static void car_state_process_base_command(void)
 {
     if(car_go_command == 0U)
     {
+        // 完赛产生的零速命令被确认后，下一次 RunCmd=1 才会开始一场新比赛。
+        car_race_finished_latched = false;
         if(common_state == COMMON_STATE_RUNNING)
         {
             car_state_apply(COMMON_STATE_IDLE);
@@ -114,7 +129,8 @@ static void car_state_process_base_command(void)
         }
     }
     else if((common_state == COMMON_STATE_IDLE)
-        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE)
+        && !car_race_finished_latched)
     {
         car_state_apply(COMMON_STATE_RUNNING);
     }
@@ -212,7 +228,8 @@ static void wireless_control_process_state(void)
         car_state_process_base_command();
     }
     else if((common_state != COMMON_STATE_PROTECT)
-        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE)
+        && !car_race_finished_latched)
     {
         car_go_command = 0U;
         car_state_apply(COMMON_STATE_PLAY);
@@ -236,6 +253,80 @@ static void servo_control_reset_pid(void)
 	servo_pid.KpNow = servo_pid.KpMin;
 }
 
+static void car_race_finish(void)
+{
+    // 正常完赛不是故障：立即进入 IDLE 的零速闭环，并阻止无线运行挡在释放前重新发车。
+    car_race_finished_latched = true;
+    car_go_command = 0U;
+    car_zebra_straight_active = false;
+    car_state_apply(COMMON_STATE_IDLE);
+}
+
+void car_race_process_zebra(bool zebra_detected)
+{
+    if(common_state != COMMON_STATE_RUNNING)
+    {
+        car_zebra_straight_active = false;
+        car_zebra_event_latched = false;
+        car_zebra_absent_frames = 0U;
+        return;
+    }
+
+    if(zebra_detected)
+    {
+        car_zebra_straight_active = true;
+        car_zebra_absent_frames = 0U;
+
+        // 斑马线上立即回正，并绕过差速分配，保持左右轮相同目标速度。
+        servo_control_reset_pid();
+        servomotor_set_angle(SERVOMOTOR_CONTROL_CENTER_ANGLE);
+        speed_control_set_closed_loop_target(
+            speed_running_target_pulse,
+            speed_running_target_pulse);
+
+        if(car_zebra_event_latched)
+        {
+            return;
+        }
+
+        car_zebra_event_latched = true;
+        if(car_zebra_pass_count < 2U)
+        {
+            car_zebra_pass_count++;
+        }
+
+        if(car_zebra_pass_count >= 2U)
+        {
+            car_race_finish();
+        }
+        return;
+    }
+
+    car_zebra_straight_active = false;
+    if(car_zebra_event_latched)
+    {
+        if(car_zebra_absent_frames < CAR_ZEBRA_REARM_ABSENT_FRAMES)
+        {
+            car_zebra_absent_frames++;
+        }
+        if(car_zebra_absent_frames >= CAR_ZEBRA_REARM_ABSENT_FRAMES)
+        {
+            car_zebra_event_latched = false;
+            car_zebra_absent_frames = 0U;
+        }
+    }
+}
+
+bool car_race_zebra_straight_is_active(void)
+{
+    return car_zebra_straight_active;
+}
+
+uint8 car_race_get_zebra_pass_count(void)
+{
+    return car_zebra_pass_count;
+}
+
 void control_init(void)
 {
     memset(&servo_pid, 0, sizeof(servo_pid));
@@ -246,6 +337,11 @@ void control_init(void)
     wireless_control_enabled = 0U;
     wireless_control_enabled_last = 0U;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
+    car_zebra_pass_count = 0U;
+    car_zebra_straight_active = false;
+    car_zebra_event_latched = false;
+    car_zebra_absent_frames = 0U;
+    car_race_finished_latched = false;
 
     // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
@@ -357,6 +453,13 @@ void servo_control(void)
 
     if(!servo_control_enabled || (common_state != COMMON_STATE_RUNNING))
     {
+        return;
+    }
+
+    if(car_zebra_straight_active)
+    {
+        servo_control_reset_pid();
+        servomotor_set_angle(SERVOMOTOR_CONTROL_CENTER_ANGLE);
         return;
     }
 
