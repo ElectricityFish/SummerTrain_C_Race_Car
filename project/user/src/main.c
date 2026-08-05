@@ -149,7 +149,7 @@ void TIM6_1ms_PIT(void)
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
 			// RunTarget 是分配前基准；斑马线直行时直接写同速目标，
-			// 其余情况由 SpeedDecision 按有符号舵机控制需求降低内轮目标。
+			// 其余情况由 SpeedDecision 按有符号舵机控制需求分配内外轮目标。
 			if(car_race_zebra_straight_is_active())
 			{
 				// 斑马线上保持左右轮同速，绕过舵机输出差速。

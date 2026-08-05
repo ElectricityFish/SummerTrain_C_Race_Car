@@ -6,7 +6,7 @@
 // RunTarget 是差速分配前的基准速度，菜单范围固定为 0~400。
 #define SPEED_CONTROL_RUN_TARGET_MAX       (400)
 
-// 单轮闭环目标的通用硬上限；RUNNING 的舵机输出差速只降低内轮，不会超过 RunTarget。
+// 单轮闭环目标的通用硬上限；为舵机输出差速的外轮加速保留到 800。
 #define SPEED_CONTROL_TARGET_ABS_MAX       (800)
 
 // 速度单位统一为“10 ms 内的编码器脉冲数”。

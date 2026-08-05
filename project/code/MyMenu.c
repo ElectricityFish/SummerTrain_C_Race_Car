@@ -32,6 +32,7 @@ static Menu_Item *check_folder = NULL;
 static Menu_Item *speed_debug_folder = NULL;
 static Menu_Item *speed_left_pid_folder = NULL;
 static Menu_Item *speed_right_pid_folder = NULL;
+static Menu_Item *differential_gain_item = NULL;
 static Menu_Item *image_send_folder = NULL;
 static Menu_Item *image_send_origin_item = NULL;
 static Menu_Item *image_send_processed_item = NULL;
@@ -473,10 +474,18 @@ void menu_init(void)
 				uint8_Box, 0.0f, 1.0f, 1.0f);
 			create_menu_number_range_dynamic(differential_folder, "Dead", (void *)&steering_differential_deadband,
 				float_Box, 0.0f, 20.0f, 0.5f);
-			create_menu_number_range_dynamic(differential_folder, "Gain", (void *)&steering_differential_gain,
-				float_Box, 0.0f, 0.10f, 0.001f);
+			differential_gain_item = create_menu_number_range_dynamic(
+				differential_folder,
+				"Gain",
+				(void *)&steering_differential_gain,
+				float_Box,
+				0.0f,
+				1.00f,
+				0.001f);
 			create_menu_number_range_dynamic(differential_folder, "MaxRatio", (void *)&steering_differential_max_ratio,
 				float_Box, 0.0f, 0.80f, 0.01f);
+			create_menu_number_range_dynamic(differential_folder, "OuterScale", (void *)&steering_differential_outer_scale,
+				float_Box, 0.0f, 1.00f, 0.01f);
 
 			item = create_menu_number_dynamic(differential_folder, "Base", (void *)&speed_decision_base_target_pulse, int16_Box);
 			if(item != NULL) item->editable = false;
@@ -489,6 +498,8 @@ void menu_init(void)
 			item = create_menu_number_dynamic(differential_folder, "Ratio", (void *)&speed_decision_differential_ratio, float_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "ReduceP", (void *)&speed_decision_inner_reduce_pulse, float_Box);
+			if(item != NULL) item->editable = false;
+			item = create_menu_number_dynamic(differential_folder, "PlusP", (void *)&speed_decision_outer_plus_pulse, float_Box);
 			if(item != NULL) item->editable = false;
 			item = create_menu_number_dynamic(differential_folder, "LTarget", (void *)&speed_decision_left_target_pulse, int16_Box);
 			if(item != NULL) item->editable = false;
@@ -825,6 +836,7 @@ static void show_number(void)
 {
 	Menu_Item *item;
 	uint8_t row;
+	uint8_t point_num;
 	uint16 y;
 
 	item = menu_get_visible_first();
@@ -865,12 +877,13 @@ static void show_number(void)
 					ips200_show_int(MENU_VALUE_X, y, *(int16_t *)item->data, 5);
 					break;
 				case float_Box:
+					point_num = (item == differential_gain_item) ? 3U : 2U;
 					ips200_show_float(
 						MENU_VALUE_X,
 						y,
-						menu_round_float_for_display(*(float *)item->data, 2),
+						menu_round_float_for_display(*(float *)item->data, point_num),
 						5,
-						2);
+						point_num);
 					break;
 				default:
 					break;
