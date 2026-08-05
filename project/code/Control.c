@@ -312,6 +312,15 @@ void car_protection_check_attitude(void)
     }
 }
 
+void car_protection_trigger_out_of_bounds(void)
+{
+    // 出界是一次性锁存事件，不加入 active_reason，也不根据后续图像自动解除。
+    if(common_state == COMMON_STATE_RUNNING || common_state == COMMON_STATE_PLAY)
+    {
+        car_state_enter_protect(CAR_PROTECTION_REASON_OUT_OF_BOUNDS);
+    }
+}
+
 void wireless_control_play_task(void)
 {
     int16 motor_duty;

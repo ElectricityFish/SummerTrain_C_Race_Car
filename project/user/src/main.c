@@ -79,6 +79,11 @@ int main(void)
 			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
 			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
 			image_process_frame();
+			if(image_process_is_out_of_bounds())
+			{
+				// 只锁存出界原因并进入现有 Protect；不修改 RunCmd，避免同一循环立即退出保护。
+				car_protection_trigger_out_of_bounds();
+			}
 			wireless_image_send_task();
 		}
 		

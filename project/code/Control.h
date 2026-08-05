@@ -15,6 +15,7 @@ typedef enum
 // 保护原因可以组合并锁存，供菜单显示和故障定位使用。
 #define CAR_PROTECTION_REASON_NONE       (0U)
 #define CAR_PROTECTION_REASON_ATTITUDE   (1U << 0)
+#define CAR_PROTECTION_REASON_OUT_OF_BOUNDS  (1U << 1)
 
 #define CAR_PROTECTION_ANGLE_LIMIT_DEG       (50.0f)
 
@@ -38,7 +39,7 @@ extern volatile bool servo_control_enabled;
 void control_init(void);
 
 // 在主循环调用，处理 Base_Control 或 Wireless_Control 的状态请求。
-// Protect 只能在故障消失且状态请求为 IDLE 时退回 IDLE。
+// Protect 只能在没有实时故障且状态请求为 IDLE 时退回 IDLE。
 void car_state_command_task(void);
 
 // 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
@@ -49,6 +50,9 @@ void wireless_control_play_task(void);
 
 // 在姿态解算完成后调用；RUNNING 与 PLAY 状态命中条件时进入 Protect。
 void car_protection_check_attitude(void);
+
+// 锁存一次出界故障并进入 Protect；IDLE/PROTECT 下调用不会改变状态。
+void car_protection_trigger_out_of_bounds(void);
 
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);

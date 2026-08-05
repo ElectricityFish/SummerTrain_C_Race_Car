@@ -55,6 +55,10 @@ uint8 image_process_get_reference_gray(void);
 uint8 image_process_get_white_min(void);
 uint8 image_process_get_white_max(void);
 
+// 返回最底行白色占比，以及该行白色占比是否低于出界门限。
+uint8 image_process_get_bottom_white_ratio(void);
+bool image_process_is_out_of_bounds(void);
+
 // 返回当前十字识别状态，以及用于补线控制和调试显示的左上、右上拐点。
 image_cross_state_enum image_process_get_cross_state(void);
 bool image_process_get_cross_corners(

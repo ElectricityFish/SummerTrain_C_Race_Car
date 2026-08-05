@@ -5,6 +5,10 @@
 #define IMAGE_PROCESS_DISPLAY_WIDTH   (240U)
 #define IMAGE_PROCESS_DISPLAY_HEIGHT  (153U)
 
+// 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
+#define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
+#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (60U)
+
 // 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
 #define IMAGE_CROSS_ROI_TOP                 (12U)
 #define IMAGE_CROSS_ROI_BOTTOM              (75U)
@@ -50,6 +54,8 @@ static uint8 image_final_mid;
 static uint8 image_last_final_mid;
 static bool image_has_last_mid;
 static bool image_new_result;
+static uint8 image_bottom_white_ratio;
+static bool image_out_of_bounds;
 static image_cross_state_enum image_cross_state;
 static uint8 image_cross_left_col;
 static uint8 image_cross_left_row;
@@ -155,6 +161,31 @@ static void image_process_calculate_threshold(const uint8 image[][MT9V03X_W])
         ((uint16)image_reference_gray * max_scale) / 10U,
         image_white_min,
         255U);
+}
+
+// 最底行白色不足表示车辆已经离开白色赛道。比例只用于显示，判定使用交叉相乘避免除法误差。
+static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
+{
+    uint8 white_threshold = image_white_min;
+    uint16 white_count = 0U;
+    uint16 col;
+
+    if(white_threshold < IMAGE_OUT_BOUND_WHITE_GRAY_MIN)
+    {
+        white_threshold = IMAGE_OUT_BOUND_WHITE_GRAY_MIN;
+    }
+
+    for(col = 0U; col < MT9V03X_W; col++)
+    {
+        if(image[MT9V03X_H - 1U][col] >= white_threshold)
+        {
+            white_count++;
+        }
+    }
+
+    image_bottom_white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
+    image_out_of_bounds = ((uint32)white_count * 100U
+        < (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN);
 }
 
 // 返回从图像底部连续向上保持白色的距离。数值越大，说明该列越像赛道内部。
@@ -802,6 +833,8 @@ void image_process_init(void)
     image_last_final_mid = image_final_mid;
     image_has_last_mid = false;
     image_new_result = false;
+    image_bottom_white_ratio = 100U;
+    image_out_of_bounds = false;
     image_cross_state = IMAGE_CROSS_STATE_NONE;
     image_cross_left_col = 0U;
     image_cross_left_row = 0U;
@@ -818,6 +851,7 @@ void image_process_frame(void)
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
 
     image_process_calculate_threshold(image);
+    image_process_detect_out_of_bounds(image);
     image_process_find_reference_col(image);
     image_process_track_edges(image);
     image_process_detect_cross(image);
@@ -889,6 +923,12 @@ void image_process_display(void)
     {
         ips200_show_string(48U, 208U, "NONE");
     }
+
+    ips200_show_string(0U, 224U, "BOT:");
+    ips200_show_uint(40U, 224U, image_bottom_white_ratio, 3U);
+    ips200_show_string(64U, 224U, "%");
+    ips200_show_string(72U, 224U, "OUT:");
+    ips200_show_string(112U, 224U, image_out_of_bounds ? "YES" : "NO ");
 }
 
 bool image_process_take_new_result(void)
@@ -925,6 +965,16 @@ uint8 image_process_get_white_min(void)
 uint8 image_process_get_white_max(void)
 {
     return image_white_max;
+}
+
+uint8 image_process_get_bottom_white_ratio(void)
+{
+    return image_bottom_white_ratio;
+}
+
+bool image_process_is_out_of_bounds(void)
+{
+    return image_out_of_bounds;
 }
 
 image_cross_state_enum image_process_get_cross_state(void)
