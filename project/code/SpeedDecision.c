@@ -8,7 +8,7 @@
 #define ACKERMANN_GAIN                     (1.0f)
 #define ACKERMANN_DEG_TO_RAD               (0.0174532925f)
 #define DIFFERENTIAL_ERROR_DEADZONE_PX     (10.0f)
-#define EMPIRICAL_ERROR_FULL_PX             (20.0f)
+#define EMPIRICAL_ERROR_FULL_PX             (15.0f)
 #define EMPIRICAL_REDUCE_RATIO_MAX         (2.00f)
 #define EMPIRICAL_PLUS_RATIO_MAX           (0.30f)
 #define DIFFERENTIAL_OUTER_MAX_RATIO_MIN   (1.00f)
@@ -123,15 +123,25 @@ static float speed_decision_lookup_wheel_delta(float servo_delta_deg)
 
 static float speed_decision_get_error_ratio(float error_abs)
 {
-	if(EMPIRICAL_ERROR_FULL_PX <= 0.0f)
+	float transition_ratio;
+
+	if(error_abs <= DIFFERENTIAL_ERROR_DEADZONE_PX)
+	{
+		return 0.0f;
+	}
+	if(EMPIRICAL_ERROR_FULL_PX <= DIFFERENTIAL_ERROR_DEADZONE_PX)
 	{
 		return 1.0f;
 	}
 
-	return speed_decision_limitf(
-		error_abs / EMPIRICAL_ERROR_FULL_PX,
+	transition_ratio = speed_decision_limitf(
+		(error_abs - DIFFERENTIAL_ERROR_DEADZONE_PX)
+			/ (EMPIRICAL_ERROR_FULL_PX - DIFFERENTIAL_ERROR_DEADZONE_PX),
 		0.0f,
 		1.0f);
+
+	// Smoothstep：15 和 20 像素两端斜率均为 0，减小差速介入/满幅时的突变。
+	return transition_ratio * transition_ratio * (3.0f - 2.0f * transition_ratio);
 }
 
 static float speed_decision_tan_taylor(float angle_rad)
@@ -147,8 +157,8 @@ void speed_decision_init(void)
 {
 	ackermann_enabled = 0U;				//先将阿克曼差速关闭
 	empirical_differential_enabled = 1U;
-	empirical_reduce_max_ratio = 1.0f;
-	empirical_plus_max_ratio = 0.30f;
+	empirical_reduce_max_ratio = 0.9f;
+	empirical_plus_max_ratio = 0.20f;
 	differential_inner_min_ratio = -1.00f;
 	differential_outer_max_ratio = 1.30f;
 	speed_decision_stop();
@@ -201,8 +211,8 @@ void speed_decision_apply(int16 base_target, float steering_error_px)
 	}
 
 	speed_decision_differential_active = 1U;
-	// 10 像素以内完全关闭；超过死区后直接使用完整图像误差归一化，
-	// 不减去死区值，也不做渐进混合。误差达到 20 像素时为满差速。
+	// 15 像素以内完全关闭；15~20 像素使用 Smoothstep 平滑介入，
+	// 误差达到 20 像素及以上时经验差速完全生效。
 	empirical_error_ratio = speed_decision_get_error_ratio(
 		ackermann_pixel_error_abs);
 	if(ackermann_enabled != 0U)
