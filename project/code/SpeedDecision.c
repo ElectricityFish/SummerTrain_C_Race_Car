@@ -7,7 +7,7 @@
 #define STEERING_DIFFERENTIAL_RATIO_MAX      (0.80f)
 #define STEERING_DIFFERENTIAL_OUTER_SCALE_MAX (1.00f)
 
-#define SPEED_PLAN_BOOST_MAX                 (100)
+#define SPEED_PLAN_BOOST_MAX                 (130)
 #define SPEED_PLAN_PROSPECT_START            (80.0f)
 #define SPEED_PLAN_PROSPECT_FULL             (96.0f)
 #define SPEED_PLAN_TURN_START                (3.0f)
