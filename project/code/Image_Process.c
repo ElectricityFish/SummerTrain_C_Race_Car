@@ -7,7 +7,7 @@
 
 // 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
 #define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
-#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (20U)
+#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (15U)
 #define IMAGE_OUT_BOUND_CONFIRM_FRAMES        (3U)
 
 // 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
@@ -982,7 +982,7 @@ void image_process_init(void)
     image_process_config.contrast_threshold = 20U;
     image_process_config.contrast_offset = 3U;
     image_process_config.search_range = 10U;
-    image_process_config.weight_center_row = 70U;
+    image_process_config.weight_center_row = 68U;
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
