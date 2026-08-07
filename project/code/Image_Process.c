@@ -13,13 +13,13 @@
 // 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
 #define IMAGE_ZEBRA_SAMPLE_ROWS               (3U)
 #define IMAGE_ZEBRA_SAMPLE_ROW_STEP           (5U)
-#define IMAGE_ZEBRA_VALID_ROWS_MIN            (2U)
+#define IMAGE_ZEBRA_VALID_ROWS_MIN            (1U)
 #define IMAGE_ZEBRA_WHITE_RATIO_MIN           (25U)
 #define IMAGE_ZEBRA_WHITE_RATIO_MAX           (75U)
-#define IMAGE_ZEBRA_TRANSITIONS_MIN           (10U)
+#define IMAGE_ZEBRA_TRANSITIONS_MIN           (5U)
 #define IMAGE_ZEBRA_RUN_WIDTH_MIN             (4U)
-#define IMAGE_ZEBRA_BLACK_RUNS_MIN            (5U)
-#define IMAGE_ZEBRA_WHITE_RUNS_MIN            (5U)
+#define IMAGE_ZEBRA_BLACK_RUNS_MIN            (3U)
+#define IMAGE_ZEBRA_WHITE_RUNS_MIN            (3U)
 #define IMAGE_ZEBRA_FILTER_RADIUS             (2U)
 #define IMAGE_ZEBRA_HOLD_MISSED_FRAMES        (2U)
 
