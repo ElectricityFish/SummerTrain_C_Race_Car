@@ -14,6 +14,8 @@
 #include "Wireless.h"
 #include "FS-A8S.h"
 
+uint8_t send_flag = 0;
+
 int main(void)
 {
 	
@@ -92,21 +94,24 @@ int main(void)
 		menu_show();								//仅在内容变化时才真正刷新
 		
 		//运行时进行无线调参
-		if(common_state == COMMON_STATE_RUNNING)
+		if(common_state == COMMON_STATE_RUNNING&&send_flag == 1)
 		{
 			//wireless_uart_printf("%.2f,%.2f,%.2f,%.2f,%.2f\n",servo_pid.KpNow,servo_pid.Actual,
 			//servo_pid.Target,servo_pid.Error0,servo_pid.Out);
 			
-			//wireless_uart_printf("%d,%d,%d,%d,%.0f,%.0f\n",
-			//speed_left_pid.TargetPulse,
-			//speed_left_pid.ActualPulse,
-			//speed_right_pid.TargetPulse,
-			//speed_right_pid.ActualPulse
-			//);
+			wireless_uart_printf("%d,%d,%d,%d\n",
+			speed_left_pid.TargetPulse,
+			speed_left_pid.ActualPulse,
+			speed_left_pid.Out,
+			speed_right_pid.TargetPulse,
+			speed_right_pid.ActualPulse,
+			speed_right_pid.Out
+			);
 			
 			//wireless_uart_printf("%d,%d\n",
 				//image_get_vsync_max_gap_ms(),
 				//image_get_capture_max_gap_ms());
+			send_flag = 0;
 			
 		}
 		
@@ -172,6 +177,7 @@ void TIM6_1ms_PIT(void)
 			speed_control_set_closed_loop_target(0, 0);
 		}
 		speed_control_10ms_task(encoder_left_pulse, encoder_right_pulse);
+		send_flag = 1;
 		count=0;
 	}
 }
