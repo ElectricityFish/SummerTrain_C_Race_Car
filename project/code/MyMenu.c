@@ -311,6 +311,7 @@ void menu_init(void)
 {
 	Menu_Item *image_folder;
 	Menu_Item *process_folder;
+	Menu_Item *speed_plan_folder;
 	Menu_Item *pid_folder;
 	Menu_Item *servo_pid_folder;
 	Menu_Item *differential_folder;
@@ -397,6 +398,22 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+	}
+	speed_plan_folder = create_menu_folder_dynamic(image_folder, "SpeedPlan");
+	if(speed_plan_folder != NULL)
+	{
+		item = create_menu_number_dynamic(speed_plan_folder, "P_Raw", (void *)&image_speed_prospect_raw, uint8_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_plan_folder, "P_Filter", (void *)&image_speed_prospect_filtered, float_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_plan_folder, "V_Vision", (void *)&speed_plan_vision_target, int16_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_plan_folder, "V_TurnCap", (void *)&speed_plan_turn_cap, int16_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_plan_folder, "V_Raw", (void *)&speed_plan_raw_target, int16_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(speed_plan_folder, "V_Plan", (void *)&speed_plan_final_target, int16_Box);
+		if(item != NULL) item->editable = false;
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。

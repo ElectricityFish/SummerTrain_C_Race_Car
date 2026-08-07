@@ -37,11 +37,18 @@ extern uint8 image_mid_line[MT9V03X_H];
 extern bool image_left_edge_valid[MT9V03X_H];
 extern bool image_right_edge_valid[MT9V03X_H];
 
+// 固定中心五列得到的速度前瞻。Raw 是中位数，Filtered 是每个新图像帧更新一次的非对称滤波结果。
+extern volatile uint8 image_speed_prospect_raw;
+extern volatile float image_speed_prospect_filtered;
+
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
 
 // 处理 image_get_buffer() 指向的一帧灰度图。应在 image_take_new_frame() 返回 true 后调用。
 void image_process_frame(void);
+
+// 重新发车或离开 RUNNING 时使下一帧直接初始化前瞻滤波，不保留上一段运行历史。
+void image_process_reset_speed_prospect_filter(void);
 
 // 在 IPS200 上显示灰度图，并叠加参考列、左右边线和中线。
 void image_process_display(void);

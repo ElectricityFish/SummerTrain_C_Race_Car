@@ -5,6 +5,11 @@
 #define IMAGE_PROCESS_DISPLAY_WIDTH   (240U)
 #define IMAGE_PROCESS_DISPLAY_HEIGHT  (153U)
 
+// 速度前瞻使用车辆当前朝向附近的五个固定列，避免“取最长白列”在弯道中过度乐观。
+#define IMAGE_SPEED_PROSPECT_SAMPLE_COUNT      (5U)
+#define IMAGE_SPEED_PROSPECT_FALL_CURRENT      (0.60f)
+#define IMAGE_SPEED_PROSPECT_RISE_CURRENT      (0.25f)
+
 // 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
 #define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
 #define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (5U)
@@ -60,6 +65,9 @@ uint8 image_mid_line[MT9V03X_H];
 bool image_left_edge_valid[MT9V03X_H];
 bool image_right_edge_valid[MT9V03X_H];
 
+volatile uint8 image_speed_prospect_raw;
+volatile float image_speed_prospect_filtered;
+
 static uint8 image_reference_col;
 static uint8 image_reference_gray;
 static uint8 image_white_min;
@@ -81,6 +89,7 @@ static uint8 image_cross_right_row;
 static bool image_cross_corners_valid;
 static uint8 image_cross_confirm_count;
 static uint8 image_cross_missed_count;
+static bool image_speed_prospect_filter_valid;
 
 // 独立逐行扫描的临时结果，避免十字检测受底部向上跟踪路径的影响。
 static uint16 image_cross_scan_left[MT9V03X_H];
@@ -384,6 +393,56 @@ static uint8 image_process_get_white_run(const uint8 image[][MT9V03X_W], uint8 c
     }
 
     return MT9V03X_H - 1U;
+}
+
+static void image_process_calculate_speed_prospect(const uint8 image[][MT9V03X_W])
+{
+    static const uint8 sample_cols[IMAGE_SPEED_PROSPECT_SAMPLE_COUNT] =
+    {
+        82U, 88U, 94U, 100U, 106U
+    };
+    uint8 runs[IMAGE_SPEED_PROSPECT_SAMPLE_COUNT];
+    uint8 i;
+    uint8 j;
+    uint8 raw;
+    float filtered;
+
+    // 五个元素直接插入排序，排序后的中间值可抑制单列反光和黑边异常。
+    for(i = 0U; i < IMAGE_SPEED_PROSPECT_SAMPLE_COUNT; i++)
+    {
+        uint8 col = image_process_limit_u8(sample_cols[i], 0U, MT9V03X_W - 1U);
+        uint8 run = image_process_get_white_run(image, col);
+
+        j = i;
+        while(j > 0U && runs[j - 1U] > run)
+        {
+            runs[j] = runs[j - 1U];
+            j--;
+        }
+        runs[j] = run;
+    }
+
+    raw = runs[IMAGE_SPEED_PROSPECT_SAMPLE_COUNT / 2U];
+    image_speed_prospect_raw = raw;
+    if(!image_speed_prospect_filter_valid)
+    {
+        image_speed_prospect_filtered = (float)raw;
+        image_speed_prospect_filter_valid = true;
+        return;
+    }
+
+    filtered = image_speed_prospect_filtered;
+    if((float)raw < filtered)
+    {
+        filtered = IMAGE_SPEED_PROSPECT_FALL_CURRENT * (float)raw
+            + (1.0f - IMAGE_SPEED_PROSPECT_FALL_CURRENT) * filtered;
+    }
+    else
+    {
+        filtered = IMAGE_SPEED_PROSPECT_RISE_CURRENT * (float)raw
+            + (1.0f - IMAGE_SPEED_PROSPECT_RISE_CURRENT) * filtered;
+    }
+    image_speed_prospect_filtered = filtered;
 }
 
 static void image_process_find_reference_col(const uint8 image[][MT9V03X_W])
@@ -1016,6 +1075,14 @@ void image_process_init(void)
     image_cross_confirm_count = 0U;
     image_cross_missed_count = 0U;
     image_cross_scan_seed_col = MT9V03X_W / 2U;
+    image_process_reset_speed_prospect_filter();
+}
+
+void image_process_reset_speed_prospect_filter(void)
+{
+    image_speed_prospect_raw = 0U;
+    image_speed_prospect_filtered = 0.0f;
+    image_speed_prospect_filter_valid = false;
 }
 
 void image_process_frame(void)
@@ -1023,6 +1090,7 @@ void image_process_frame(void)
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
 
     image_process_calculate_threshold(image);
+    image_process_calculate_speed_prospect(image);
     image_process_detect_zebra(image);
     image_process_detect_out_of_bounds(image);
     image_process_find_reference_col(image);

@@ -111,6 +111,16 @@ int main(void)
 			//wireless_uart_printf("%d,%d\n",
 				//image_get_vsync_max_gap_ms(),
 				//image_get_capture_max_gap_ms());
+
+			//wireless_uart_printf("%d,%.2f,%d,%d,%d,%d,%d,%d\n",
+				//image_speed_prospect_raw,
+				//image_speed_prospect_filtered,
+				//speed_plan_vision_target,
+				//speed_plan_turn_cap,
+				//speed_plan_raw_target,
+				//speed_plan_final_target,
+				//speed_left_pid.ActualPulse,
+				//speed_right_pid.ActualPulse);
 			send_flag = 0;
 			
 		}
@@ -164,8 +174,9 @@ void TIM6_1ms_PIT(void)
 			}
 			else
 			{
-				speed_decision_apply(
+				speed_decision_update(
 					speed_running_target_pulse,
+					image_speed_prospect_filtered,
 					SERVO_CONTROL_DIRECTION * servo_pid.Out);
 			}
 		}

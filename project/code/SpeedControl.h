@@ -3,8 +3,8 @@
 
 #include "zf_common_typedef.h"
 
-// RunTarget 是差速分配前的基准速度，菜单范围固定为 0~400。
-#define SPEED_CONTROL_RUN_TARGET_MAX       (400)
+// RunTarget 是速度规划和差速分配前的基础速度，菜单范围固定为 0~450。
+#define SPEED_CONTROL_RUN_TARGET_MAX       (450)
 
 // 单轮闭环目标的通用硬上限；为舵机输出差速的外轮加速保留到 800。
 #define SPEED_CONTROL_TARGET_ABS_MAX       (800)

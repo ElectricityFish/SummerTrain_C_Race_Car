@@ -7,6 +7,14 @@
 #define STEERING_DIFFERENTIAL_RATIO_MAX      (0.80f)
 #define STEERING_DIFFERENTIAL_OUTER_SCALE_MAX (1.00f)
 
+#define SPEED_PLAN_BOOST_MAX                 (100)
+#define SPEED_PLAN_PROSPECT_START            (80.0f)
+#define SPEED_PLAN_PROSPECT_FULL             (96.0f)
+#define SPEED_PLAN_TURN_START                (3.0f)
+#define SPEED_PLAN_TURN_FULL                 (20.0f)
+#define SPEED_PLAN_ACCEL_STEP                (2)
+#define SPEED_PLAN_DECEL_STEP                (10)
+
 volatile uint8 steering_differential_enabled;
 volatile float steering_differential_deadband;
 volatile float steering_differential_gain;
@@ -22,6 +30,13 @@ volatile float speed_decision_inner_reduce_pulse;
 volatile float speed_decision_outer_plus_pulse;
 volatile int16 speed_decision_left_target_pulse;
 volatile int16 speed_decision_right_target_pulse;
+
+volatile int16 speed_plan_vision_target;
+volatile int16 speed_plan_turn_cap;
+volatile int16 speed_plan_raw_target;
+volatile int16 speed_plan_final_target;
+
+static uint8 speed_plan_valid;
 
 static float speed_decision_absf(float value)
 {
@@ -67,6 +82,90 @@ void speed_decision_init(void)
 	steering_differential_max_ratio = 0.8f;
 	steering_differential_outer_scale = 0.2f;
 	speed_decision_stop();
+}
+
+void speed_decision_start(int16 base_target)
+{
+	base_target = speed_decision_limit_base_target(base_target);
+	speed_plan_vision_target = base_target;
+	speed_plan_turn_cap = base_target;
+	speed_plan_raw_target = base_target;
+	speed_plan_final_target = base_target;
+	speed_plan_valid = 1U;
+}
+
+void speed_decision_update(
+	int16 base_target,
+	float filtered_prospect,
+	float signed_steering_demand)
+{
+	int16 plan_max;
+	int16 vision_target;
+	int16 turn_cap;
+	int16 raw_target;
+	float normalized;
+	float smooth;
+	float turn_ratio;
+	float steering_abs;
+
+	base_target = speed_decision_limit_base_target(base_target);
+	if(base_target <= 0)
+	{
+		speed_plan_vision_target = 0;
+		speed_plan_turn_cap = 0;
+		speed_plan_raw_target = 0;
+		speed_plan_final_target = 0;
+		speed_plan_valid = 1U;
+		speed_decision_apply(0, signed_steering_demand);
+		return;
+	}
+
+	plan_max = base_target + SPEED_PLAN_BOOST_MAX;
+	if(plan_max > SPEED_CONTROL_RUN_TARGET_MAX)
+	{
+		plan_max = SPEED_CONTROL_RUN_TARGET_MAX;
+	}
+
+	normalized = (filtered_prospect - SPEED_PLAN_PROSPECT_START)
+		/ (SPEED_PLAN_PROSPECT_FULL - SPEED_PLAN_PROSPECT_START);
+	normalized = speed_decision_limitf(normalized, 0.0f, 1.0f);
+	smooth = normalized * normalized * (3.0f - 2.0f * normalized);
+	vision_target = speed_decision_float_to_int16(
+		(float)base_target + (float)(plan_max - base_target) * smooth);
+
+	steering_abs = speed_decision_absf(signed_steering_demand);
+	turn_ratio = (steering_abs - SPEED_PLAN_TURN_START)
+		/ (SPEED_PLAN_TURN_FULL - SPEED_PLAN_TURN_START);
+	turn_ratio = speed_decision_limitf(turn_ratio, 0.0f, 1.0f);
+	turn_cap = speed_decision_float_to_int16(
+		(float)plan_max - (float)(plan_max - base_target) * turn_ratio);
+	raw_target = (vision_target < turn_cap) ? vision_target : turn_cap;
+
+	if(speed_plan_valid == 0U)
+	{
+		speed_plan_final_target = base_target;
+		speed_plan_valid = 1U;
+	}
+
+	if(raw_target > speed_plan_final_target)
+	{
+		int16 difference = raw_target - speed_plan_final_target;
+		speed_plan_final_target += (difference > SPEED_PLAN_ACCEL_STEP)
+			? SPEED_PLAN_ACCEL_STEP
+			: difference;
+	}
+	else if(raw_target < speed_plan_final_target)
+	{
+		int16 difference = speed_plan_final_target - raw_target;
+		speed_plan_final_target -= (difference > SPEED_PLAN_DECEL_STEP)
+			? SPEED_PLAN_DECEL_STEP
+			: difference;
+	}
+
+	speed_plan_vision_target = vision_target;
+	speed_plan_turn_cap = turn_cap;
+	speed_plan_raw_target = raw_target;
+	speed_decision_apply(speed_plan_final_target, signed_steering_demand);
 }
 
 void speed_decision_apply(int16 base_target, float signed_steering_demand)
@@ -174,6 +273,11 @@ void speed_decision_apply(int16 base_target, float signed_steering_demand)
 
 void speed_decision_stop(void)
 {
+	speed_plan_vision_target = 0;
+	speed_plan_turn_cap = 0;
+	speed_plan_raw_target = 0;
+	speed_plan_final_target = 0;
+	speed_plan_valid = 0U;
 	speed_decision_base_target_pulse = 0;
 	speed_decision_differential_active = 0U;
 	speed_decision_steering_demand = 0.0f;

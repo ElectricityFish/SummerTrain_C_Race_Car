@@ -22,7 +22,22 @@ extern volatile float speed_decision_outer_plus_pulse;
 extern volatile int16 speed_decision_left_target_pulse;
 extern volatile int16 speed_decision_right_target_pulse;
 
+// 速度规划观察量：前瞻目标、转向上限、二者取小值、斜坡后的差速前基准目标。
+extern volatile int16 speed_plan_vision_target;
+extern volatile int16 speed_plan_turn_cap;
+extern volatile int16 speed_plan_raw_target;
+extern volatile int16 speed_plan_final_target;
+
 void speed_decision_init(void);
+
+// RUNNING 入口直接从基础速度开始，不做软启动。
+void speed_decision_start(int16 base_target);
+
+// 每 10 ms 更新一次基础速度规划，并把规划结果交给现有差速分配。
+void speed_decision_update(
+    int16 base_target,
+    float filtered_prospect,
+    float signed_steering_demand);
 
 // 仅由 RUNNING 的 10 ms 速度链调用：有符号舵机控制需求同时决定差速方向和强度。
 // 正值表示左转，负值表示右转；内轮减速，外轮可按 OuterScale 比例加速。

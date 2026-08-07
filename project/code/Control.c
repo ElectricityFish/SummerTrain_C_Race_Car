@@ -47,6 +47,7 @@ static float control_absf(float value)
 static void car_state_stop_actuators(void)
 {
 	speed_decision_stop();
+	image_process_reset_speed_prospect_filter();
 	speed_control_set_closed_loop_enabled(false);
 	speed_control_debug_stop();
     motor_set_duty(0, 0);
@@ -58,6 +59,7 @@ static void car_state_hold_zero_speed(void)
 {
 	// IDLE/PROTECT 保持速度环工作，以零目标主动抑制车轮转动。
 	speed_decision_stop();
+	image_process_reset_speed_prospect_filter();
 	speed_control_debug_stop();
 	speed_control_set_closed_loop_target(0, 0);
 	speed_control_set_closed_loop_enabled(true);
@@ -96,6 +98,8 @@ static void car_state_apply(Common_State next_state)
 		car_race_finished_latched = false;
 		speed_control_debug_stop();
 		speed_control_set_closed_loop_enabled(true);
+		image_process_reset_speed_prospect_filter();
+		speed_decision_start(speed_running_target_pulse);
 		speed_decision_apply(
 			speed_running_target_pulse,
 			SERVO_CONTROL_DIRECTION * servo_pid.Out);
