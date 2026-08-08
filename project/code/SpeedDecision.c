@@ -12,7 +12,7 @@
 #define SPEED_PLAN_PROSPECT_FULL             (96.0f)
 #define SPEED_PLAN_TURN_START                (3.0f)
 #define SPEED_PLAN_TURN_FULL                 (20.0f)
-#define SPEED_PLAN_ACCEL_STEP                (2)
+#define SPEED_PLAN_ACCEL_STEP                (4)
 #define SPEED_PLAN_DECEL_STEP                (10)
 
 volatile uint8 steering_differential_enabled;
