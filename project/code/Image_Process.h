@@ -2,6 +2,7 @@
 #define __IMAGE_PROCESS_H__
 
 #include "Image.h"
+#include "Image_Track_V2.h"
 
 // 图像处理的所有运行时参数。可直接绑定到菜单进行在线调节。
 typedef struct
@@ -54,6 +55,9 @@ uint8 image_process_get_reference_col(void);
 uint8 image_process_get_reference_gray(void);
 uint8 image_process_get_white_min(void);
 uint8 image_process_get_white_max(void);
+
+// 第一阶段 V2 路径结果。默认影子运行；CONTROL_ENABLE=1 时接管 final_mid。
+const image_track_v2_result_t *image_process_get_v2_result(void);
 
 // 返回最底行白色占比，以及该行白色占比是否低于出界门限。
 uint8 image_process_get_bottom_white_ratio(void);

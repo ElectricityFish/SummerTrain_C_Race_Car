@@ -181,7 +181,12 @@ static bool wireless_image_send_processed(uint8 channel_id)
 {
     uint16 row;
     uint32 image_size = (uint32)MT9V03X_IMAGE_SIZE * sizeof(uint16);
+#if IMAGE_TRACK_V2_DISPLAY_ENABLE
+    const image_track_v2_result_t *v2_result = image_process_get_v2_result();
+    uint8 reference_col = IMAGE_CALIBRATED_CENTER_COL;
+#else
     uint8 reference_col = image_process_get_reference_col();
+#endif
     uint8 cross_left_col = 0U;
     uint8 cross_left_row = 0U;
     uint8 cross_right_col = 0U;
@@ -206,9 +211,15 @@ static bool wireless_image_send_processed(uint8 channel_id)
     for(row = 0U; row < MT9V03X_H; row++)
     {
         uint16 col;
+#if IMAGE_TRACK_V2_DISPLAY_ENABLE
+        uint16 left_edge = v2_result->left_edge[row];
+        uint16 right_edge = v2_result->right_edge[row];
+        uint16 mid_line = v2_result->center_line[row];
+#else
         uint16 left_edge = image_left_edge[row];
         uint16 right_edge = image_right_edge[row];
         uint16 mid_line = image_mid_line[row];
+#endif
 
         for(col = 0U; col < MT9V03X_W; col++)
         {
@@ -216,7 +227,39 @@ static bool wireless_image_send_processed(uint8 channel_id)
                 wireless_image_snapshot[row * MT9V03X_W + col]);
         }
 
-        // 与 image_process_display() 保持相同的绘制顺序，后绘制的参考列覆盖同位置的其他标记。
+        // 先画标定中心，后画路径，避免直道中线被参考线覆盖。
+        if(reference_col < MT9V03X_W)
+        {
+            wireless_image_processed_line[reference_col] = WIRELESS_IMAGE_RGB565_CYAN;
+        }
+
+        // 与 image_process_display() 保持相同的绘制语义。
+#if IMAGE_TRACK_V2_DISPLAY_ENABLE
+        if(v2_result->left_valid[row] && left_edge < MT9V03X_W)
+        {
+            wireless_image_processed_line[left_edge] = WIRELESS_IMAGE_RGB565_RED;
+        }
+        if(v2_result->right_valid[row] && right_edge < MT9V03X_W)
+        {
+            wireless_image_processed_line[right_edge] = WIRELESS_IMAGE_RGB565_BLUE;
+        }
+        if(mid_line < MT9V03X_W)
+        {
+            if(v2_result->source[row] == IMAGE_TRACK_SOURCE_BOTH_MEASURED)
+            {
+                wireless_image_processed_line[mid_line] = WIRELESS_IMAGE_RGB565_GREEN;
+            }
+            else if(v2_result->source[row] == IMAGE_TRACK_SOURCE_LEFT_ONLY
+                || v2_result->source[row] == IMAGE_TRACK_SOURCE_RIGHT_ONLY)
+            {
+                wireless_image_processed_line[mid_line] = WIRELESS_IMAGE_RGB565_YELLOW;
+            }
+            else if(v2_result->source[row] == IMAGE_TRACK_SOURCE_SHORT_PREDICTED)
+            {
+                wireless_image_processed_line[mid_line] = WIRELESS_IMAGE_RGB565_MAGENTA;
+            }
+        }
+#else
         if(image_left_edge_valid[row] && left_edge < MT9V03X_W)
         {
             wireless_image_processed_line[left_edge] = WIRELESS_IMAGE_RGB565_RED;
@@ -229,11 +272,7 @@ static bool wireless_image_send_processed(uint8 channel_id)
         {
             wireless_image_processed_line[mid_line] = WIRELESS_IMAGE_RGB565_GREEN;
         }
-        if(reference_col < MT9V03X_W)
-        {
-            wireless_image_processed_line[reference_col] = WIRELESS_IMAGE_RGB565_YELLOW;
-        }
-
+#endif
         if(cross_corners_valid)
         {
             wireless_image_draw_cross_marker(

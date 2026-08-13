@@ -1,5 +1,6 @@
 #include "zf_common_headfile.h"
 #include "Image_Process.h"
+#include "Image_Track_V2.h"
 
 #define IMAGE_PROCESS_WEIGHT_BASE     (1U)
 #define IMAGE_PROCESS_DISPLAY_WIDTH   (240U)
@@ -1016,12 +1017,15 @@ void image_process_init(void)
     image_cross_confirm_count = 0U;
     image_cross_missed_count = 0U;
     image_cross_scan_seed_col = MT9V03X_W / 2U;
+    image_track_v2_init();
 }
 
 void image_process_frame(void)
 {
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
 
+    // V2 只读取原始灰度图，不受旧十字补线写回边界数组的影响。
+    image_track_v2_process(image);
     image_process_calculate_threshold(image);
     image_process_detect_zebra(image);
     image_process_detect_out_of_bounds(image);
@@ -1030,6 +1034,17 @@ void image_process_frame(void)
     image_process_detect_cross(image);
     image_process_apply_cross_repair();
     image_process_calculate_mid();
+#if IMAGE_TRACK_V2_CONTROL_ENABLE
+    // 第一阶段尚未迁移元素补线：十字候选/确认期间保留旧规划路径；
+    // V2 置信度太低时也不让一个未知结果直接接管舵机。
+    if(image_cross_state == IMAGE_CROSS_STATE_NONE
+        && image_track_v2_get_result()->frame_confidence
+            >= IMAGE_TRACK_V2_CONTROL_CONFIDENCE_MIN)
+    {
+        image_final_mid = image_track_v2_get_result()->final_mid;
+        image_last_final_mid = image_final_mid;
+    }
+#endif
     image_new_result = true;
     image_process_finish_handler();
 }
@@ -1037,6 +1052,7 @@ void image_process_frame(void)
 void image_process_display(void)
 {
     const uint8 *image = image_get_buffer();
+    const image_track_v2_result_t *v2_result = image_track_v2_get_result();
     uint16 row;
 
     ips200_show_gray_image(0U, 0U, image, MT9V03X_W, MT9V03X_H,
@@ -1045,6 +1061,35 @@ void image_process_display(void)
     for(row = 0U; row < MT9V03X_H; row++)
     {
         uint16 y = (row * IMAGE_PROCESS_DISPLAY_HEIGHT) / MT9V03X_H;
+#if IMAGE_TRACK_V2_DISPLAY_ENABLE
+        uint16 left_x = ((uint16)v2_result->left_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
+        uint16 right_x = ((uint16)v2_result->right_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
+        uint16 mid_x = ((uint16)v2_result->center_line[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
+        uint16 ref_x = ((uint16)IMAGE_CALIBRATED_CENTER_COL * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
+
+        ips200_draw_point(ref_x, y, RGB565_CYAN);
+        if(v2_result->left_valid[row])
+        {
+            ips200_draw_point(left_x, y, RGB565_RED);
+        }
+        if(v2_result->right_valid[row])
+        {
+            ips200_draw_point(right_x, y, RGB565_BLUE);
+        }
+        if(v2_result->source[row] == IMAGE_TRACK_SOURCE_BOTH_MEASURED)
+        {
+            ips200_draw_point(mid_x, y, RGB565_GREEN);
+        }
+        else if(v2_result->source[row] == IMAGE_TRACK_SOURCE_LEFT_ONLY
+            || v2_result->source[row] == IMAGE_TRACK_SOURCE_RIGHT_ONLY)
+        {
+            ips200_draw_point(mid_x, y, RGB565_YELLOW);
+        }
+        else if(v2_result->source[row] == IMAGE_TRACK_SOURCE_SHORT_PREDICTED)
+        {
+            ips200_draw_point(mid_x, y, RGB565_MAGENTA);
+        }
+#else
         uint16 left_x = (image_left_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
         uint16 right_x = (image_right_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
         uint16 mid_x = (image_mid_line[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
@@ -1060,6 +1105,7 @@ void image_process_display(void)
         }
         ips200_draw_point(mid_x, y, RGB565_GREEN);
         ips200_draw_point(ref_x, y, RGB565_YELLOW);
+#endif
     }
 
     if(image_cross_corners_valid)
@@ -1078,11 +1124,23 @@ void image_process_display(void)
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
     ips200_show_string(0U, 160U, "MID:");
     ips200_show_uint(40U, 160U, image_final_mid, 3U);
-    ips200_show_string(88U, 160U, "REF:");
-    ips200_show_uint(128U, 160U, image_reference_col, 3U);
+    ips200_show_string(88U, 160U, "V2:");
+    ips200_show_uint(128U, 160U, v2_result->final_mid, 3U);
     ips200_set_color(RGB565_WHITE, RGB565_BLACK);
-    ips200_show_string(0U, 176U, "R:RED B:BLUE G:MID");
-    ips200_show_string(0U, 192U, "Y:REF  KEY4:BACK");
+    ips200_show_string(0U, 176U, "V2 T:");
+    ips200_show_uint(48U, 176U, v2_result->threshold, 3U);
+    ips200_show_string(88U, 176U, "Q:");
+    ips200_show_uint(104U, 176U, v2_result->frame_confidence, 3U);
+    ips200_show_string(136U, 176U, "F:");
+    ips200_show_uint(152U, 176U, v2_result->valid_far_distance_mm / 10U, 3U);
+    ips200_show_string(184U, 176U, "cm");
+    ips200_show_string(0U, 192U, "V2 US:");
+    ips200_show_uint(48U, 192U, v2_result->process_time_us, 5U);
+#if IMAGE_TRACK_V2_CONTROL_ENABLE
+    ips200_show_string(112U, 192U, "CTRL:ON ");
+#else
+    ips200_show_string(112U, 192U, "CTRL:SHD");
+#endif
     ips200_show_string(0U, 208U, "CROSS:");
     if(image_cross_state == IMAGE_CROSS_STATE_DETECTED)
     {
@@ -1140,6 +1198,11 @@ uint8 image_process_get_white_min(void)
 uint8 image_process_get_white_max(void)
 {
     return image_white_max;
+}
+
+const image_track_v2_result_t *image_process_get_v2_result(void)
+{
+    return image_track_v2_get_result();
 }
 
 uint8 image_process_get_bottom_white_ratio(void)
