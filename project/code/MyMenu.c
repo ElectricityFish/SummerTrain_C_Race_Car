@@ -415,6 +415,21 @@ void menu_init(void)
 		{
 			item->editable = false;
 		}
+		item = create_menu_number_dynamic(servo_pid_folder, "Actual", &servo_pid.Actual, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(servo_pid_folder, "Error", &servo_pid.Error0, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
+		item = create_menu_number_dynamic(servo_pid_folder, "Output", &servo_pid.Out, float_Box);
+		if(item != NULL)
+		{
+			item->editable = false;
+		}
 		item = create_menu_number_dynamic(servo_pid_folder, "YawRate", &servo_pid.YawRate, float_Box);
 		if(item != NULL)
 		{

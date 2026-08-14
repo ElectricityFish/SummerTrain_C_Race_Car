@@ -26,7 +26,8 @@ typedef struct {
 // Generic PID update function.
 void PID_Update(PID_t *p);
 
-// 舵机视觉控制专用 PID。KpNow 由误差大小动态计算，单位为“舵机角度/图像像素”。
+// 舵机视觉控制专用 PID。Actual 是转向需求坐标：大于 Target 左转，小于 Target 右转。
+// KpNow 由误差大小动态计算，单位为“舵机角度/图像像素”。
 // Kd 对图像误差作差分，Kd2 对陀螺仪横摆角速度作阻尼反馈。
 typedef struct {
 	float Target;
@@ -52,7 +53,7 @@ typedef struct {
 	float OutMin;
 } Servo_PID_t;
 
-// 舵机专用更新：Kp 随 |Target - Actual| 按二次曲线由 KpMin 过渡到 KpMax。
+// 舵机专用更新：Error = Actual - Target，Kp 随 |Error| 按二次曲线变化。
 void servo_pid_up_date(Servo_PID_t *p);
 
 

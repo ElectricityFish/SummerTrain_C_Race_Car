@@ -647,7 +647,7 @@ static void image_track_v2_finalize_result(void)
     static const uint8 anchor_weights[IMAGE_TRACK_V2_ANCHOR_COUNT] =
         {10U, 25U, 30U, 25U, 10U};
     uint16 frame_confidence_sum = 0U;
-    int32 error_sum = 0;
+    int32 control_error_sum = 0;
     uint32 control_weight_sum = 0U;
     uint8 anchor;
     uint8 row;
@@ -719,26 +719,34 @@ static void image_track_v2_finalize_result(void)
         }
         if(image_track_v2_result.source[anchor_row] != IMAGE_TRACK_SOURCE_INVALID)
         {
-            error_sum += ((int16)image_track_v2_result.center_line[anchor_row]
-                - IMAGE_CALIBRATED_CENTER_COL) * (int32)control_weight;
+            // 旧版控制坐标的极性与图像几何横坐标相反：
+            // 几何中线向图像右侧移动时，送给旧 PID 的 final_mid 应向左侧移动。
+            control_error_sum += (IMAGE_CALIBRATED_CENTER_COL
+                - (int16)image_track_v2_result.center_line[anchor_row])
+                * (int32)control_weight;
             control_weight_sum += control_weight;
         }
     }
 
     image_track_v2_result.frame_confidence = (uint8)(frame_confidence_sum / 100U);
-    if(control_weight_sum == 0U)
+    if(control_weight_sum == 0U
+        || image_track_v2_result.frame_confidence
+            < IMAGE_TRACK_V2_CONTROL_CONFIDENCE_MIN)
     {
+        // 低质量帧不切回旧算法，直接保持 V2 自己上一帧的结果，避免控制源抖动。
         current_mid = image_track_v2_last_final_mid;
     }
-    else if(error_sum >= 0)
+    else if(control_error_sum >= 0)
     {
-        current_mid = IMAGE_CALIBRATED_CENTER_COL
-            + (int16)((error_sum + (int32)control_weight_sum / 2) / (int32)control_weight_sum);
+        current_mid = (MT9V03X_W / 2U)
+            + (int16)((control_error_sum + (int32)control_weight_sum / 2)
+                / (int32)control_weight_sum);
     }
     else
     {
-        current_mid = IMAGE_CALIBRATED_CENTER_COL
-            + (int16)((error_sum - (int32)control_weight_sum / 2) / (int32)control_weight_sum);
+        current_mid = (MT9V03X_W / 2U)
+            + (int16)((control_error_sum - (int32)control_weight_sum / 2)
+                / (int32)control_weight_sum);
     }
 
     current_mid = image_track_v2_limit_u8(current_mid, 0U, MT9V03X_W - 1U);
@@ -752,7 +760,7 @@ void image_track_v2_init(void)
     memset(image_track_v2_binary, 0, sizeof(image_track_v2_binary));
     memset(&image_track_v2_result, 0, sizeof(image_track_v2_result));
     image_track_v2_last_threshold = 128U;
-    image_track_v2_last_final_mid = IMAGE_CALIBRATED_CENTER_COL;
+    image_track_v2_last_final_mid = MT9V03X_W / 2U;
     image_track_v2_last_seed_center = IMAGE_CALIBRATED_CENTER_COL;
     image_track_v2_has_threshold = false;
     image_track_v2_timer_init();

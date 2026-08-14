@@ -345,7 +345,8 @@ void control_init(void)
     car_zebra_absent_frames = 0U;
     car_race_finished_latched = false;
 
-    // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
+    // Target/Actual 是转向需求坐标：大于中心表示左转，小于中心表示右转。
+    // Out 的正值对应左转舵角，负值对应右转舵角。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
 	servo_pid.KpMin = 0.35f;
 	servo_pid.KpMax = 0.75f;
@@ -465,8 +466,8 @@ void servo_control(void)
         return;
     }
 
-    // servo_pid_up_date 内部使用 Error = Target - Actual，并按 |Error| 动态计算 KpNow。
-    // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
+    // image_process_get_final_mid() 返回转向需求坐标，不是原始图像几何列。
+    // servo_pid_up_date 使用 Error = Actual - Target，使正误差对应左转。
     servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
     servo_pid.Actual = (float)image_process_get_final_mid();
     // Z 轴是本车横摆轴；直接使用最近一次采样并换算为 deg/s，不经过姿态解算中的量化。

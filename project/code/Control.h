@@ -26,10 +26,10 @@ extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位
 extern volatile uint8 wireless_control_enabled;   // Wireless_Control/Enable：0 关闭，1 开启
 
 
-// 图像列坐标的目标偏置：正值表示目标中线向图像右侧移动。
+// 转向需求坐标的目标偏置：正值会增加左转静态偏置，负值增加右转静态偏置。
 #define SERVO_CONTROL_IMAGE_CENTER_OFFSET     (0.0f)
 
-// 1.0f：图像中线右移时输出右转；若实车方向相反，改为 -1.0f。
+// 执行器安装方向：1.0f 表示正 PID 输出下发大于 90 度的左转舵角。
 #define SERVO_CONTROL_DIRECTION                (1.0f)
 
 extern Servo_PID_t servo_pid;

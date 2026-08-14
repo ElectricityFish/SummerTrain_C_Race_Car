@@ -65,10 +65,12 @@ static uint8 image_reference_col;
 static uint8 image_reference_gray;
 static uint8 image_white_min;
 static uint8 image_white_max;
-static uint8 image_final_mid;
+// 主循环每帧只在全部算法完成后写一次；20 ms 舵机中断只读取这个已发布结果。
+static volatile uint8 image_final_mid;
 static uint8 image_last_final_mid;
 static bool image_has_last_mid;
 static bool image_new_result;
+static bool image_v2_control_active;
 static uint8 image_bottom_white_ratio;
 static bool image_out_of_bounds;
 static uint8 image_out_of_bounds_confirm_count;
@@ -106,6 +108,17 @@ static uint8 image_process_limit_u8(int32 value, uint8 lower, uint8 upper)
 static uint8 image_process_abs_diff(uint8 value_a, uint8 value_b)
 {
     return (value_a >= value_b) ? (value_a - value_b) : (value_b - value_a);
+}
+
+// 旧算法输出的是图像几何列坐标；统一转换为 V2 使用的转向需求坐标。
+// 这样无论 V2 控制还是十字回退，送给舵机 PID 的语义始终是：大于中心左转，小于中心右转。
+static uint8 image_process_geometry_mid_to_control_mid(uint8 geometry_mid)
+{
+    int16 center = (int16)(MT9V03X_W / 2U);
+    return image_process_limit_u8(
+        center + (center - (int16)geometry_mid),
+        0U,
+        MT9V03X_W - 1U);
 }
 
 static uint8 image_process_contrast(uint8 inside, uint8 outside)
@@ -942,13 +955,14 @@ static void image_process_apply_cross_repair(void)
     }
 }
 
-static void image_process_calculate_mid(void)
+static uint8 image_process_calculate_mid(void)
 {
     uint32 weighted_sum = 0U;
     uint16 weight_sum = 0U;
     uint16 row;
     uint8 current_weight = image_process_limit_u8(image_process_config.mid_filter_current, 0U, 100U);
     uint8 current_mid;
+    uint8 legacy_mid;
 
     for(row = 0U; row < MT9V03X_H; row++)
     {
@@ -962,15 +976,16 @@ static void image_process_calculate_mid(void)
     current_mid = (uint8)(weighted_sum / weight_sum);
     if(!image_has_last_mid)
     {
-        image_final_mid = current_mid;
+        legacy_mid = current_mid;
         image_has_last_mid = true;
     }
     else
     {
-        image_final_mid = (uint8)(((uint16)current_mid * current_weight
+        legacy_mid = (uint8)(((uint16)current_mid * current_weight
             + (uint16)image_last_final_mid * (100U - current_weight) + 50U) / 100U);
     }
-    image_last_final_mid = image_final_mid;
+    image_last_final_mid = legacy_mid;
+    return legacy_mid;
 }
 
 void image_process_init(void)
@@ -1003,6 +1018,7 @@ void image_process_init(void)
     image_last_final_mid = image_final_mid;
     image_has_last_mid = false;
     image_new_result = false;
+    image_v2_control_active = false;
     image_bottom_white_ratio = 100U;
     image_out_of_bounds = false;
     image_out_of_bounds_confirm_count = 0U;
@@ -1023,6 +1039,8 @@ void image_process_init(void)
 void image_process_frame(void)
 {
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
+    uint8 legacy_mid;
+    uint8 next_control_mid;
 
     // V2 只读取原始灰度图，不受旧十字补线写回边界数组的影响。
     image_track_v2_process(image);
@@ -1033,18 +1051,20 @@ void image_process_frame(void)
     image_process_track_edges(image);
     image_process_detect_cross(image);
     image_process_apply_cross_repair();
-    image_process_calculate_mid();
+    legacy_mid = image_process_calculate_mid();
+    next_control_mid = image_process_geometry_mid_to_control_mid(legacy_mid);
+    image_v2_control_active = false;
 #if IMAGE_TRACK_V2_CONTROL_ENABLE
-    // 第一阶段尚未迁移元素补线：十字候选/确认期间保留旧规划路径；
-    // V2 置信度太低时也不让一个未知结果直接接管舵机。
-    if(image_cross_state == IMAGE_CROSS_STATE_NONE
-        && image_track_v2_get_result()->frame_confidence
-            >= IMAGE_TRACK_V2_CONTROL_CONFIDENCE_MIN)
+    // 普通赛道由 V2 连续独占控制；低质量帧由 V2 内部保持自身历史，不逐帧回退。
+    // 只有旧十字已经连续确认并实际补线时，才有意切到旧元素路径。
+    if(image_cross_state != IMAGE_CROSS_STATE_DETECTED)
     {
-        image_final_mid = image_track_v2_get_result()->final_mid;
-        image_last_final_mid = image_final_mid;
+        next_control_mid = image_track_v2_get_result()->final_mid;
+        image_v2_control_active = true;
     }
 #endif
+    // 唯一发布点：避免舵机中断在旧算法写入与 V2 覆盖之间读到半帧结果。
+    image_final_mid = next_control_mid;
     image_new_result = true;
     image_process_finish_handler();
 }
@@ -1137,7 +1157,14 @@ void image_process_display(void)
     ips200_show_string(0U, 192U, "V2 US:");
     ips200_show_uint(48U, 192U, v2_result->process_time_us, 5U);
 #if IMAGE_TRACK_V2_CONTROL_ENABLE
-    ips200_show_string(112U, 192U, "CTRL:ON ");
+    if(image_v2_control_active)
+    {
+        ips200_show_string(112U, 192U, "CTRL:V2 ");
+    }
+    else
+    {
+        ips200_show_string(112U, 192U, "CTRL:OLD");
+    }
 #else
     ips200_show_string(112U, 192U, "CTRL:SHD");
 #endif

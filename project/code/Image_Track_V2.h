@@ -46,6 +46,7 @@ typedef struct
     uint8 contrast_span;
     uint8 seed_row;
     uint8 frame_confidence;
+    // 与旧版 image_final_mid 使用相同的控制坐标极性，不是几何横坐标的简单平均。
     uint8 final_mid;
     uint8 measured_row_count;
     uint8 rebuilt_row_count;

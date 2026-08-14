@@ -51,7 +51,8 @@ void servo_pid_up_date(Servo_PID_t *p)
 	float kp_max;
 
 	p->Error1 = p->Error0;
-	p->Error0 = p->Target - p->Actual;
+	// Actual 是转向需求坐标：大于 Target 表示左转，小于 Target 表示右转。
+	p->Error0 = p->Actual - p->Target;
 
 	// 菜单误设 KpMax < KpMin 时，以 KpMin 为上限，避免出现负的动态增益区间。
 	kp_min = p->KpMin;
