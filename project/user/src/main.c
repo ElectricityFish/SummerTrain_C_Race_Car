@@ -78,14 +78,18 @@ int main(void)
 		image_update();								//接收DMA采集完成的一帧图像
 		if(image_take_new_frame())
 		{
-			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
-			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
+			const uint8 *processed_source;
+
 			image_process_frame();
-			car_race_process_zebra(image_process_is_zebra_detected());
-			if(image_process_is_out_of_bounds())
+			processed_source = image_process_get_source_frame();
+			//无线原图与叠加结果统一使用图像算法已锁定的同一帧，避免DMA改写造成错帧。
+			if(processed_source != NULL)
 			{
-				// 只锁存出界原因并进入现有 Protect；不修改 RunCmd，避免同一循环立即退出保护。
-				car_protection_trigger_out_of_bounds();
+				wireless_image_capture_task(
+					(common_state == COMMON_STATE_IDLE),
+					processed_source,
+					MT9V03X_W,
+					MT9V03X_H);
 			}
 			wireless_image_send_task();
 		}
@@ -153,21 +157,10 @@ void TIM6_1ms_PIT(void)
 		encoder_right_pulse = encoder_right_get_pulse();
 		if(common_state == COMMON_STATE_RUNNING && speed_control_closed_loop_is_active())
 		{
-			// RunTarget 是分配前基准；斑马线直行时直接写同速目标，
-			// 其余情况由 SpeedDecision 按有符号舵机控制需求分配内外轮目标。
-			if(car_race_zebra_straight_is_active())
-			{
-				// 斑马线上保持左右轮同速，绕过舵机输出差速。
-				speed_control_set_closed_loop_target(
-					speed_running_target_pulse,
-					speed_running_target_pulse);
-			}
-			else
-			{
-				speed_decision_apply(
-					speed_running_target_pulse,
-					SERVO_CONTROL_DIRECTION * servo_pid.Out);
-			}
+			// RunTarget 是分配前基准，由 SpeedDecision 按舵机需求分配内外轮目标。
+			speed_decision_apply(
+				speed_running_target_pulse,
+				SERVO_CONTROL_DIRECTION * servo_pid.Out);
 		}
 		else if(((common_state == COMMON_STATE_IDLE) || (common_state == COMMON_STATE_PROTECT))
 			&& speed_control_closed_loop_is_active()

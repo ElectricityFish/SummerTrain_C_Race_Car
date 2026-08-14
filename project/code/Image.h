@@ -39,7 +39,10 @@ uint16 image_get_process_max_gap_ms(void);
 //获取一帧未处理的新图像标志。调用后会清除该标志。
 bool image_take_new_frame(void);
 
-//获取灰度图像缓冲区首地址，图像尺寸由MT9V03X_W和MT9V03X_H定义。
-const uint8 *image_get_buffer(void);
+//锁定并返回最近一次DMA完整采集的稳定帧；锁定期间DMA不会写入该缓冲区。
+const uint8 *image_acquire_latest_frame(void);
+
+//完成图像处理、显示和快照后释放对应缓冲区。
+void image_release_frame(const uint8 *frame);
 
 #endif

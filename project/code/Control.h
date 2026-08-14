@@ -54,13 +54,6 @@ void car_protection_check_attitude(void);
 // 锁存一次出界故障并进入 Protect；IDLE/PROTECT 下调用不会改变状态。
 void car_protection_trigger_out_of_bounds(void);
 
-// 每个新图像结果调用一次：第一次斑马线直行通过，第二次斑马线立即零速完赛。
-void car_race_process_zebra(bool zebra_detected);
-
-// 斑马线直行覆盖状态供10ms速度目标分配使用；经过次数用于调试。
-bool car_race_zebra_straight_is_active(void);
-uint8 car_race_get_zebra_pass_count(void);
-
 // 设置视觉舵机闭环的启停。关闭时清除 PID 状态并回正。
 void servo_control_set_enabled(bool enabled);
 

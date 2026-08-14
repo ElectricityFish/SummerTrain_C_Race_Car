@@ -1,1109 +1,906 @@
 #include "zf_common_headfile.h"
 #include "Image_Process.h"
+#include "Image_Perspective_Table.h"
 
-#define IMAGE_PROCESS_WEIGHT_BASE     (1U)
-#define IMAGE_PROCESS_DISPLAY_WIDTH   (240U)
-#define IMAGE_PROCESS_DISPLAY_HEIGHT  (153U)
+#if (MT9V03X_W != 188) || (MT9V03X_H != 120)
+#error "Image_Perspective_Table.h is calibrated only for MT9V03X 188x120 output."
+#endif
 
-// 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
-#define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
-#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (5U)
-#define IMAGE_OUT_BOUND_CONFIRM_FRAMES        (5U)
+#if IMAGE_PROCESS_MAX_POINTS > 255U
+#error "Image point counts use uint8 and must not exceed 255."
+#endif
 
-// 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
-#define IMAGE_ZEBRA_SAMPLE_ROWS               (3U)
-#define IMAGE_ZEBRA_SAMPLE_ROW_STEP           (5U)
-#define IMAGE_ZEBRA_VALID_ROWS_MIN            (1U)
-#define IMAGE_ZEBRA_WHITE_RATIO_MIN           (25U)
-#define IMAGE_ZEBRA_WHITE_RATIO_MAX           (75U)
-#define IMAGE_ZEBRA_TRANSITIONS_MIN           (5U)
-#define IMAGE_ZEBRA_RUN_WIDTH_MIN             (4U)
-#define IMAGE_ZEBRA_BLACK_RUNS_MIN            (3U)
-#define IMAGE_ZEBRA_WHITE_RUNS_MIN            (3U)
-#define IMAGE_ZEBRA_FILTER_RADIUS             (2U)
-#define IMAGE_ZEBRA_HOLD_MISSED_FRAMES        (2U)
+#define IMAGE_PROCESS_DISPLAY_WIDTH        (240U)
+#define IMAGE_PROCESS_DISPLAY_HEIGHT       (153U)
+#define IMAGE_LOCAL_BLOCK_HALF             (2)
+#define IMAGE_SEED_ROW_BOTTOM              (116)
+#define IMAGE_SEED_ROW_TOP                 (70)
+#define IMAGE_SEED_ROW_STEP                (3)
+#define IMAGE_SEED_CENTER_COL              (MT9V03X_W / 2U)
+#define IMAGE_SEED_SAMPLE_ROW_TOP          (70U)
+#define IMAGE_SEED_SAMPLE_ROW_BOTTOM       (90U)
+#define IMAGE_SEED_SIDE_SAMPLE_WIDTH       (16U)
+#define IMAGE_TRACE_MIN_MARGIN             (3)
+#define IMAGE_CENTER_RESAMPLE_STEP         (2U)
+#define IMAGE_TARGET_REACH_TOLERANCE_CM    (4U)
+// 必须保持为有符号数：边界切向量 dx/dy 可能为负。
+// 若这里保留 U 后缀，C 的通常算术转换会把负方向量转成巨大无符号数，
+// 使右边界生成的中心线被饱和到最右列 187（最终 MID 恰好变成 140）。
+#define IMAGE_TRACK_HALF_WIDTH_UNITS       ((int32)((225U + IMAGE_PERSPECTIVE_GRID_MM / 2U) / IMAGE_PERSPECTIVE_GRID_MM))
 
-// 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
-#define IMAGE_CROSS_ROI_TOP                 (12U)
-#define IMAGE_CROSS_ROI_BOTTOM              (75U)
-#define IMAGE_CROSS_CORNER_SEARCH_TOP       (30U)
-#define IMAGE_CROSS_CORNER_SEARCH_BOTTOM    (65U)
-#define IMAGE_CROSS_CONTEXT_ROWS             (7U)
-#define IMAGE_CROSS_ABOVE_INVALID_MIN        (2U)
-#define IMAGE_CROSS_BELOW_VALID_MIN          (4U)
-#define IMAGE_CROSS_CORNER_SIDE_MARGIN       (5U)
-#define IMAGE_CROSS_CORNER_MIN_GAP           (18U)
-#define IMAGE_CROSS_CORNER_MAX_GAP           (130U)
-#define IMAGE_CROSS_LANE_ROW_MAX_GAP         (150U)
-#define IMAGE_CROSS_CORNER_MAX_ROW_DIFF      (18U)
-#define IMAGE_CROSS_MID_MAX_OFFSET           (36U)
-#define IMAGE_CROSS_TANGENT_SEARCH_TOP       (30U)
-#define IMAGE_CROSS_TANGENT_SEARCH_BOTTOM    (72U)
-#define IMAGE_CROSS_TANGENT_HALF_WINDOW       (3U)
-#define IMAGE_CROSS_TANGENT_MAX_STEP         (10U)
-#define IMAGE_CROSS_TANGENT_EDGE_MARGIN       (2U)
-#define IMAGE_CROSS_SLOPE_SCALE              (256)
-#define IMAGE_CROSS_FULL_WIDTH_TOP           (42U)
-#define IMAGE_CROSS_FULL_WIDTH_BOTTOM        (95U)
-#define IMAGE_CROSS_FULL_WIDTH_WHITE_MIN     (MT9V03X_W - 12U)
-#define IMAGE_CROSS_EDGE_SAMPLE_COLS          (8U)
-#define IMAGE_CROSS_EDGE_WHITE_MIN            (7U)
-#define IMAGE_CROSS_FULL_WIDTH_ROWS           (3U)
-#define IMAGE_CROSS_CONFIRM_FRAMES           (2U)
-#define IMAGE_CROSS_HOLD_MISSED_FRAMES       (2U)
+static const int8 image_trace_forward[4][2] =
+{
+    {-2, 0}, {0, 2}, {2, 0}, {0, -2}
+};
+static const int8 image_trace_left[4][2] =
+{
+    {-2, -2}, {-2, 2}, {2, 2}, {2, -2}
+};
+static const int8 image_trace_right[4][2] =
+{
+    {-2, 2}, {2, 2}, {2, -2}, {-2, -2}
+};
 
 Image_Process_Config image_process_config;
 
-uint16 image_left_edge[MT9V03X_H];
-uint16 image_right_edge[MT9V03X_H];
-uint8 image_mid_line[MT9V03X_H];
-bool image_left_edge_valid[MT9V03X_H];
-bool image_right_edge_valid[MT9V03X_H];
+static Image_Track_Point image_left_border[IMAGE_PROCESS_MAX_POINTS];
+static Image_Track_Point image_right_border[IMAGE_PROCESS_MAX_POINTS];
+static Image_Track_Point image_centerline_image[IMAGE_PROCESS_MAX_POINTS];
+static const uint8 *image_source_frame;
+static Image_Bird_Point image_left_bird[IMAGE_PROCESS_MAX_POINTS];
+static Image_Bird_Point image_right_bird[IMAGE_PROCESS_MAX_POINTS];
+static Image_Bird_Point image_centerline_bird[IMAGE_PROCESS_MAX_POINTS];
+static Image_Bird_Point image_resample_scratch[IMAGE_PROCESS_MAX_POINTS];
 
-static uint8 image_reference_col;
-static uint8 image_reference_gray;
-static uint8 image_white_min;
-static uint8 image_white_max;
-static uint8 image_final_mid;
+static uint8 image_left_border_count;
+static uint8 image_right_border_count;
+static uint8 image_left_bird_count;
+static uint8 image_right_bird_count;
+static uint8 image_centerline_count;
+static uint8 image_left_seed_threshold;
+static uint8 image_right_seed_threshold;
+static bool image_seed_threshold_initialized;
+static Image_Track_Point image_target_point;
+static bool image_target_point_valid;
 static uint8 image_last_final_mid;
 static bool image_has_last_mid;
 static bool image_new_result;
-static uint8 image_bottom_white_ratio;
-static bool image_out_of_bounds;
-static uint8 image_out_of_bounds_confirm_count;
-static bool image_zebra_detected;
-static uint8 image_zebra_missed_count;
-static image_cross_state_enum image_cross_state;
-static uint8 image_cross_left_col;
-static uint8 image_cross_left_row;
-static uint8 image_cross_right_col;
-static uint8 image_cross_right_row;
-static bool image_cross_corners_valid;
-static uint8 image_cross_confirm_count;
-static uint8 image_cross_missed_count;
+static bool image_cycle_counter_ready;
+static Image_Process_Result image_process_result;
+static volatile uint8 image_published_mid;
+static volatile bool image_published_mid_valid;
 
-// 独立逐行扫描的临时结果，避免十字检测受底部向上跟踪路径的影响。
-static uint16 image_cross_scan_left[MT9V03X_H];
-static uint16 image_cross_scan_right[MT9V03X_H];
-static bool image_cross_scan_left_valid[MT9V03X_H];
-static bool image_cross_scan_right_valid[MT9V03X_H];
-static uint8 image_cross_scan_seed_col;
-
-static uint8 image_process_limit_u8(int32 value, uint8 lower, uint8 upper)
+static uint8 image_limit_u8(int32 value, uint8 lower, uint8 upper)
 {
-    if(value < lower)
+    if(value < (int32)lower)
     {
         return lower;
     }
-    if(value > upper)
+    if(value > (int32)upper)
     {
         return upper;
     }
     return (uint8)value;
 }
 
-static uint8 image_process_abs_diff(uint8 value_a, uint8 value_b)
+static void image_sanitize_config(void)
 {
-    return (value_a >= value_b) ? (value_a - value_b) : (value_b - value_a);
+    uint8 maximum_lookahead_cm = (uint8)(
+        (IMAGE_PERSPECTIVE_NEAR_X * IMAGE_PERSPECTIVE_GRID_MM) / 10U);
+
+    if(image_process_config.min_border_points < 3U)
+    {
+        image_process_config.min_border_points = 3U;
+    }
+    if(image_process_config.min_border_points > IMAGE_PROCESS_MAX_POINTS)
+    {
+        image_process_config.min_border_points = IMAGE_PROCESS_MAX_POINTS;
+    }
+    if(image_process_config.resample_step == 0U)
+    {
+        image_process_config.resample_step = 1U;
+    }
+    if(image_process_config.lookahead_cm == 0U)
+    {
+        image_process_config.lookahead_cm = 1U;
+    }
+    if(image_process_config.lookahead_cm > maximum_lookahead_cm)
+    {
+        image_process_config.lookahead_cm = maximum_lookahead_cm;
+    }
+    if(image_process_config.target_gain_percent > 100U)
+    {
+        image_process_config.target_gain_percent = 100U;
+    }
+    if(image_process_config.target_filter_current > 100U)
+    {
+        image_process_config.target_filter_current = 100U;
+    }
 }
 
-static uint8 image_process_contrast(uint8 inside, uint8 outside)
+static uint16 image_sqrt_u32(uint32 value)
 {
-    uint16 sum = (uint16)inside + outside;
-    int16 difference;
+    uint32 result = 0U;
+    uint32 bit = 1UL << 30;
 
-    if(sum == 0U)
+    while(bit > value)
+    {
+        bit >>= 2;
+    }
+    while(bit != 0U)
+    {
+        if(value >= result + bit)
+        {
+            value -= result + bit;
+            result = (result >> 1) + bit;
+        }
+        else
+        {
+            result >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (uint16)result;
+}
+
+static uint8 image_local_threshold(
+    const uint8 image[][MT9V03X_W],
+    uint8 row,
+    uint8 col)
+{
+    uint16 total = 0U;
+    int16 sample_row;
+    int16 sample_col;
+    uint8 mean;
+
+    for(sample_row = (int16)row - IMAGE_LOCAL_BLOCK_HALF;
+        sample_row <= (int16)row + IMAGE_LOCAL_BLOCK_HALF;
+        sample_row++)
+    {
+        for(sample_col = (int16)col - IMAGE_LOCAL_BLOCK_HALF;
+            sample_col <= (int16)col + IMAGE_LOCAL_BLOCK_HALF;
+            sample_col++)
+        {
+            total += image[sample_row][sample_col];
+        }
+    }
+
+    mean = (uint8)(total / 25U);
+    if(mean <= image_process_config.local_threshold_offset)
     {
         return 0U;
     }
-
-    difference = (int16)inside - outside;
-    if(difference <= 0)
-    {
-        return 0U;
-    }
-    return (uint8)(((int32)difference * 200) / sum);
+    return (uint8)(mean - image_process_config.local_threshold_offset);
 }
 
-static uint8 image_process_row_weight(uint8 row)
+static bool image_seed_edge_has_contrast(
+    const uint8 image[][MT9V03X_W],
+    uint8 row,
+    uint8 col)
 {
-    uint8 center = image_process_limit_u8(image_process_config.weight_center_row, 0U, MT9V03X_H - 1U);
-    uint8 span = image_process_limit_u8(image_process_config.weight_span, 1U, MT9V03X_H - 1U);
-    uint8 peak = image_process_limit_u8(image_process_config.weight_peak, IMAGE_PROCESS_WEIGHT_BASE, 100U);
-    uint8 distance = image_process_abs_diff(row, center);
+    uint8 left = image[row][col - 2U];
+    uint8 right = image[row][col + 2U];
+    uint16 difference = (left >= right) ? (left - right) : (right - left);
+    uint16 sum = (uint16)left + right;
 
-    if(distance >= span)
+    if(difference < image_process_config.start_contrast_min || difference == 0U)
     {
-        return IMAGE_PROCESS_WEIGHT_BASE;
+        return false;
     }
-
-    return (uint8)(IMAGE_PROCESS_WEIGHT_BASE
-        + ((uint16)(peak - IMAGE_PROCESS_WEIGHT_BASE) * (span - distance)) / span);
+    return (sum / difference <= 7U);
 }
 
-static void image_process_calculate_threshold(const uint8 image[][MT9V03X_W])
+static uint8 image_region_average(
+    const uint8 image[][MT9V03X_W],
+    uint8 row0,
+    uint8 row1,
+    uint8 col0,
+    uint8 col1)
 {
-    uint8 rows = image_process_limit_u8(image_process_config.reference_rows, 1U, MT9V03X_H);
-    uint8 cols = image_process_limit_u8(image_process_config.reference_cols, 1U, MT9V03X_W);
-    uint8 min_scale = image_process_limit_u8(image_process_config.white_min_scale, 1U, 20U);
-    uint8 max_scale = image_process_limit_u8(image_process_config.white_max_scale, min_scale, 25U);
-    uint16 start_col = (MT9V03X_W - cols) / 2U;
-    uint16 end_col = start_col + cols;
-    uint16 start_row = MT9V03X_H - rows;
-    uint32 sum = 0U;
+    uint32 total = 0U;
     uint16 count = 0U;
     uint16 row;
     uint16 col;
 
-    for(row = start_row; row < MT9V03X_H; row++)
+    for(row = row0; row <= row1; row++)
     {
-        for(col = start_col; col < end_col; col++)
+        for(col = col0; col <= col1; col++)
         {
-            sum += image[row][col];
+            total += image[row][col];
             count++;
         }
     }
-
-    image_reference_gray = (uint8)(sum / count);
-    if(image_reference_gray < image_process_config.black_threshold)
-    {
-        image_reference_gray = image_process_config.black_threshold;
-    }
-
-    image_white_min = image_process_limit_u8(
-        ((uint16)image_reference_gray * min_scale) / 10U,
-        image_process_config.black_threshold,
-        255U);
-    image_white_max = image_process_limit_u8(
-        ((uint16)image_reference_gray * max_scale) / 10U,
-        image_white_min,
-        255U);
+    return (uint8)(total / count);
 }
 
-static uint8 image_process_get_feature_white_threshold(void)
+static void image_update_seed_thresholds(const uint8 image[][MT9V03X_W])
 {
-    return (image_white_min < IMAGE_OUT_BOUND_WHITE_GRAY_MIN)
-        ? IMAGE_OUT_BOUND_WHITE_GRAY_MIN
-        : image_white_min;
+    uint8 white = image_region_average(
+        image,
+        IMAGE_SEED_SAMPLE_ROW_TOP,
+        IMAGE_SEED_SAMPLE_ROW_BOTTOM,
+        IMAGE_SEED_CENTER_COL - 8U,
+        IMAGE_SEED_CENTER_COL + 8U);
+    uint8 left_black = image_region_average(
+        image,
+        IMAGE_SEED_SAMPLE_ROW_TOP,
+        IMAGE_SEED_SAMPLE_ROW_BOTTOM,
+        3U,
+        3U + IMAGE_SEED_SIDE_SAMPLE_WIDTH - 1U);
+    uint8 right_black = image_region_average(
+        image,
+        IMAGE_SEED_SAMPLE_ROW_TOP,
+        IMAGE_SEED_SAMPLE_ROW_BOTTOM,
+        MT9V03X_W - 3U - IMAGE_SEED_SIDE_SAMPLE_WIDTH,
+        MT9V03X_W - 4U);
+    uint8 left_target;
+    uint8 right_target;
+
+    left_target = (white > left_black + image_process_config.start_contrast_min)
+        ? (uint8)(((uint16)white + left_black) / 2U)
+        : image_left_seed_threshold;
+    right_target = (white > right_black + image_process_config.start_contrast_min)
+        ? (uint8)(((uint16)white + right_black) / 2U)
+        : image_right_seed_threshold;
+
+    if(!image_seed_threshold_initialized)
+    {
+        image_left_seed_threshold = left_target;
+        image_right_seed_threshold = right_target;
+        image_seed_threshold_initialized = true;
+    }
+    else
+    {
+        image_left_seed_threshold = (uint8)(((uint16)image_left_seed_threshold + left_target) / 2U);
+        image_right_seed_threshold = (uint8)(((uint16)image_right_seed_threshold + right_target) / 2U);
+    }
 }
 
-// 对横向5像素窗口作多数表决，消除单像素和双像素噪点后再统计条纹。
-static bool image_process_zebra_pixel_is_white(
+static bool image_find_left_seed(
     const uint8 image[][MT9V03X_W],
-    uint8 row,
-    uint16 col,
-    uint8 white_threshold)
+    Image_Track_Point *seed)
 {
-    uint16 start_col = (col > IMAGE_ZEBRA_FILTER_RADIUS)
-        ? col - IMAGE_ZEBRA_FILTER_RADIUS
-        : 0U;
-    uint16 end_col = col + IMAGE_ZEBRA_FILTER_RADIUS;
-    uint8 white_count = 0U;
-    uint8 sample_count = 0U;
-    uint16 sample_col;
+    int16 row;
 
-    if(end_col >= MT9V03X_W)
+    for(row = IMAGE_SEED_ROW_BOTTOM; row >= IMAGE_SEED_ROW_TOP; row -= IMAGE_SEED_ROW_STEP)
     {
-        end_col = MT9V03X_W - 1U;
-    }
+        int16 left = IMAGE_TRACE_MIN_MARGIN;
+        int16 right = IMAGE_SEED_CENTER_COL;
 
-    for(sample_col = start_col; sample_col <= end_col; sample_col++)
-    {
-        if(image[row][sample_col] >= white_threshold)
+        while(left < right)
         {
-            white_count++;
-        }
-        sample_count++;
-    }
+            int16 middle = (left + right) >> 1;
+            int16 col8 = middle - 8;
+            int16 col25 = middle - 25;
 
-    return ((uint16)white_count * 2U >= (uint16)sample_count + 1U);
-}
-
-static bool image_process_zebra_row_is_valid(
-    const uint8 image[][MT9V03X_W],
-    uint8 row,
-    uint8 white_threshold)
-{
-    bool last_white = image_process_zebra_pixel_is_white(image, row, 0U, white_threshold);
-    uint16 white_count = last_white ? 1U : 0U;
-    uint16 run_width = 1U;
-    uint8 transition_count = 0U;
-    uint8 black_run_count = 0U;
-    uint8 white_run_count = 0U;
-    uint16 col;
-
-    for(col = 1U; col < MT9V03X_W; col++)
-    {
-        bool current_white = image_process_zebra_pixel_is_white(
-            image,
-            row,
-            col,
-            white_threshold);
-
-        if(current_white)
-        {
-            white_count++;
-        }
-
-        if(current_white == last_white)
-        {
-            run_width++;
-            continue;
-        }
-
-        transition_count++;
-        if(run_width >= IMAGE_ZEBRA_RUN_WIDTH_MIN)
-        {
-            if(last_white)
+            if(col8 < IMAGE_TRACE_MIN_MARGIN) col8 = IMAGE_TRACE_MIN_MARGIN;
+            if(col25 < IMAGE_TRACE_MIN_MARGIN) col25 = IMAGE_TRACE_MIN_MARGIN;
+            if(image[row][middle] < image_left_seed_threshold
+                && image[row][col8] < image_left_seed_threshold
+                && image[row][col25] < image_left_seed_threshold)
             {
-                white_run_count++;
+                left = middle + 1;
             }
             else
             {
-                black_run_count++;
-            }
-        }
-        last_white = current_white;
-        run_width = 1U;
-    }
-
-    if(run_width >= IMAGE_ZEBRA_RUN_WIDTH_MIN)
-    {
-        if(last_white)
-        {
-            white_run_count++;
-        }
-        else
-        {
-            black_run_count++;
-        }
-    }
-
-    return ((uint32)white_count * 100U
-            >= (uint32)MT9V03X_W * IMAGE_ZEBRA_WHITE_RATIO_MIN)
-        && ((uint32)white_count * 100U
-            <= (uint32)MT9V03X_W * IMAGE_ZEBRA_WHITE_RATIO_MAX)
-        && (transition_count >= IMAGE_ZEBRA_TRANSITIONS_MIN)
-        && (black_run_count >= IMAGE_ZEBRA_BLACK_RUNS_MIN)
-        && (white_run_count >= IMAGE_ZEBRA_WHITE_RUNS_MIN);
-}
-
-static void image_process_detect_zebra(const uint8 image[][MT9V03X_W])
-{
-    uint8 white_threshold = image_process_get_feature_white_threshold();
-    uint8 valid_rows = 0U;
-    uint8 sample;
-
-    for(sample = 0U; sample < IMAGE_ZEBRA_SAMPLE_ROWS; sample++)
-    {
-        uint8 row = MT9V03X_H - 1U - sample * IMAGE_ZEBRA_SAMPLE_ROW_STEP;
-
-        if(image_process_zebra_row_is_valid(image, row, white_threshold))
-        {
-            valid_rows++;
-        }
-    }
-
-    if(valid_rows >= IMAGE_ZEBRA_VALID_ROWS_MIN)
-    {
-        image_zebra_detected = true;
-        image_zebra_missed_count = 0U;
-    }
-    else if(image_zebra_detected
-        && image_zebra_missed_count < IMAGE_ZEBRA_HOLD_MISSED_FRAMES)
-    {
-        // 短暂漏检时继续保持斑马线优先，避免同一条斑马线中途误触发出界保护。
-        image_zebra_missed_count++;
-    }
-    else
-    {
-        image_zebra_detected = false;
-        image_zebra_missed_count = 0U;
-    }
-}
-
-// 最底行连续三帧白色不足才确认离开赛道，过滤弯道、模糊等造成的单帧异常。
-// 比例只用于显示，判定使用交叉相乘避免除法误差。
-static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
-{
-    uint8 white_threshold = image_process_get_feature_white_threshold();
-    uint16 white_count = 0U;
-    uint16 col;
-
-    for(col = 0U; col < MT9V03X_W; col++)
-    {
-        if(image[MT9V03X_H - 1U][col] >= white_threshold)
-        {
-            white_count++;
-        }
-    }
-
-    image_bottom_white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
-    if(image_zebra_detected
-        || ((uint32)white_count * 100U
-            >= (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN))
-    {
-        // 斑马线优先级最高；任意一帧恢复正常也会打断连续出界计数。
-        image_out_of_bounds_confirm_count = 0U;
-        image_out_of_bounds = false;
-        return;
-    }
-
-    if(image_out_of_bounds_confirm_count < IMAGE_OUT_BOUND_CONFIRM_FRAMES)
-    {
-        image_out_of_bounds_confirm_count++;
-    }
-    image_out_of_bounds =
-        (image_out_of_bounds_confirm_count >= IMAGE_OUT_BOUND_CONFIRM_FRAMES);
-}
-
-// 返回从图像底部连续向上保持白色的距离。数值越大，说明该列越像赛道内部。
-static uint8 image_process_get_white_run(const uint8 image[][MT9V03X_W], uint8 col)
-{
-    int16 row;
-    uint8 offset = image_process_limit_u8(image_process_config.contrast_offset, 1U, 8U);
-    uint8 threshold = image_process_config.contrast_threshold;
-
-    for(row = MT9V03X_H - 1; row >= (int16)offset; row--)
-    {
-        uint8 current = image[row][col];
-        uint8 upper = image[row - offset][col];
-
-        if(current < image_white_min)
-        {
-            return (uint8)(MT9V03X_H - 1 - row);
-        }
-        if(upper > image_white_max)
-        {
-            continue;
-        }
-        if(image_process_contrast(current, upper) > threshold)
-        {
-            return (uint8)(MT9V03X_H - 1 - row);
-        }
-    }
-
-    return MT9V03X_H - 1U;
-}
-
-static void image_process_find_reference_col(const uint8 image[][MT9V03X_W])
-{
-    uint8 offset = image_process_limit_u8(image_process_config.contrast_offset, 1U, 8U);
-    uint8 center = MT9V03X_W / 2U;
-    uint8 best_col = center;
-    uint8 best_run = 0U;
-    uint16 col;
-
-    for(col = 0U; col < MT9V03X_W; col += offset)
-    {
-        uint8 run;
-
-        if(image[MT9V03X_H - 1U][col] < image_white_min)
-        {
-            continue;
-        }
-
-        run = image_process_get_white_run(image, (uint8)col);
-        if((run > best_run)
-            || ((run == best_run) && (image_process_abs_diff((uint8)col, center)
-                < image_process_abs_diff(best_col, center))))
-        {
-            best_run = run;
-            best_col = (uint8)col;
-        }
-    }
-
-    image_reference_col = best_col;
-}
-
-static uint16 image_process_find_left_edge(
-    const uint8 image[][MT9V03X_W],
-    uint8 row,
-    int16 start,
-    int16 end,
-    bool *found)
-{
-    uint8 offset = image_process_limit_u8(image_process_config.contrast_offset, 1U, 8U);
-    uint8 threshold = image_process_config.contrast_threshold;
-    int16 col;
-
-    if(found != NULL)
-    {
-        *found = false;
-    }
-
-    start = image_process_limit_u8(start, offset, MT9V03X_W - 1U);
-    end = image_process_limit_u8(end, offset, start);
-
-    for(col = start; col >= end; col--)
-    {
-        uint8 inside = image[row][col];
-        uint8 outside = image[row][col - offset];
-
-        if(inside < image_white_min)
-        {
-            if(found != NULL)
-            {
-                *found = true;
-            }
-            return (uint16)col;
-        }
-        if(outside > image_white_max)
-        {
-            continue;
-        }
-        if(image_process_contrast(inside, outside) > threshold)
-        {
-            if(found != NULL)
-            {
-                *found = true;
-            }
-            return (uint16)(col - offset);
-        }
-    }
-
-    return 0U;
-}
-
-static uint16 image_process_find_right_edge(
-    const uint8 image[][MT9V03X_W],
-    uint8 row,
-    int16 start,
-    int16 end,
-    bool *found)
-{
-    uint8 offset = image_process_limit_u8(image_process_config.contrast_offset, 1U, 8U);
-    uint8 threshold = image_process_config.contrast_threshold;
-    int16 col;
-
-    if(found != NULL)
-    {
-        *found = false;
-    }
-
-    start = image_process_limit_u8(start, 0U, MT9V03X_W - 1U - offset);
-    end = image_process_limit_u8(end, start, MT9V03X_W - 1U - offset);
-
-    for(col = start; col <= end; col++)
-    {
-        uint8 inside = image[row][col];
-        uint8 outside = image[row][col + offset];
-
-        if(inside < image_white_min)
-        {
-            if(found != NULL)
-            {
-                *found = true;
-            }
-            return (uint16)col;
-        }
-        if(outside > image_white_max)
-        {
-            continue;
-        }
-        if(image_process_contrast(inside, outside) > threshold)
-        {
-            if(found != NULL)
-            {
-                *found = true;
-            }
-            return (uint16)(col + offset);
-        }
-    }
-
-    return MT9V03X_W - 1U;
-}
-
-static void image_process_track_edges(const uint8 image[][MT9V03X_W])
-{
-    int16 left_start = image_reference_col;
-    int16 right_start = image_reference_col;
-    int16 row;
-    uint8 range = image_process_limit_u8(image_process_config.search_range, 1U, MT9V03X_W / 2U);
-
-    for(row = MT9V03X_H - 1; row >= 0; row--)
-    {
-        uint16 left_edge;
-        uint16 right_edge;
-        bool left_valid;
-        bool right_valid;
-
-        left_edge = image_process_find_left_edge(image, (uint8)row, left_start, 0, &left_valid);
-        // 保持原巡线行为：只要局部搜索落到图像边界，就从参考列再搜索一次。
-        if((left_edge == 0U) && (left_start != image_reference_col))
-        {
-            left_edge = image_process_find_left_edge(
-                image,
-                (uint8)row,
-                image_reference_col,
-                0,
-                &left_valid);
-        }
-
-        right_edge = image_process_find_right_edge(
-            image,
-            (uint8)row,
-            right_start,
-            MT9V03X_W - 1U,
-            &right_valid);
-        if((right_edge == MT9V03X_W - 1U) && (right_start != image_reference_col))
-        {
-            right_edge = image_process_find_right_edge(
-                image,
-                (uint8)row,
-                image_reference_col,
-                MT9V03X_W - 1U,
-                &right_valid);
-        }
-
-        image_left_edge[row] = left_edge;
-        image_right_edge[row] = right_edge;
-        image_left_edge_valid[row] = left_valid;
-        image_right_edge_valid[row] = right_valid;
-
-        left_start = image_process_limit_u8((int16)left_edge + range, 0U, MT9V03X_W - 1U);
-        right_start = image_process_limit_u8((int16)right_edge - range, 0U, MT9V03X_W - 1U);
-    }
-}
-
-// 横向宽白带结束后，纵向赛道会重新形成一段可同时看到左右边界的过渡带。
-static bool image_process_cross_lane_row_valid(uint8 row)
-{
-    uint16 left_col = image_cross_scan_left[row];
-    uint16 right_col = image_cross_scan_right[row];
-    uint16 gap;
-
-    if(!image_cross_scan_left_valid[row] || !image_cross_scan_right_valid[row]
-        || left_col + IMAGE_CROSS_CORNER_SIDE_MARGIN >= image_cross_scan_seed_col
-        || right_col <= image_cross_scan_seed_col + IMAGE_CROSS_CORNER_SIDE_MARGIN
-        || left_col >= right_col)
-    {
-        return false;
-    }
-
-    gap = right_col - left_col;
-    return gap >= IMAGE_CROSS_CORNER_MIN_GAP && gap <= IMAGE_CROSS_LANE_ROW_MAX_GAP;
-}
-
-// 十字横道会在图像中下部形成连续的全宽白带；普通赛道只会在最底部因透视变宽。
-static bool image_process_has_cross_white_band(const uint8 image[][MT9V03X_W])
-{
-    uint8 consecutive_rows = 0U;
-    uint16 row;
-
-    for(row = IMAGE_CROSS_FULL_WIDTH_TOP; row <= IMAGE_CROSS_FULL_WIDTH_BOTTOM; row++)
-    {
-        uint16 white_count = 0U;
-        uint8 left_white = 0U;
-        uint8 right_white = 0U;
-        uint16 col;
-
-        for(col = 0U; col < MT9V03X_W; col++)
-        {
-            if(image[row][col] >= image_white_min)
-            {
-                white_count++;
-                if(col < IMAGE_CROSS_EDGE_SAMPLE_COLS)
-                {
-                    left_white++;
-                }
-                if(col >= MT9V03X_W - IMAGE_CROSS_EDGE_SAMPLE_COLS)
-                {
-                    right_white++;
-                }
+                right = middle;
             }
         }
 
-        if(white_count >= IMAGE_CROSS_FULL_WIDTH_WHITE_MIN
-            && left_white >= IMAGE_CROSS_EDGE_WHITE_MIN
-            && right_white >= IMAGE_CROSS_EDGE_WHITE_MIN)
+        if(left >= IMAGE_TRACE_MIN_MARGIN
+            && left < MT9V03X_W - IMAGE_TRACE_MIN_MARGIN
+            && image[row][left + 2] >= image_left_seed_threshold
+            && image_seed_edge_has_contrast(image, (uint8)row, (uint8)left))
         {
-            consecutive_rows++;
-            if(consecutive_rows >= IMAGE_CROSS_FULL_WIDTH_ROWS)
-            {
-                return true;
-            }
-        }
-        else
-        {
-            consecutive_rows = 0U;
-        }
-    }
-
-    return false;
-}
-
-// 在确认存在十字过渡带后，选择与“候选点到底角补线”方向最接近的轮廓切点。
-static bool image_process_find_cross_corner(
-    bool left_side,
-    uint8 *corner_col,
-    uint8 *corner_row)
-{
-    const uint16 *edge = left_side ? image_cross_scan_left : image_cross_scan_right;
-    const bool *edge_valid = left_side
-        ? image_cross_scan_left_valid
-        : image_cross_scan_right_valid;
-    int32 bottom_col = left_side ? 0 : (MT9V03X_W - 1U);
-    uint16 best_score = 0xFFFFU;
-    uint8 best_col = 0U;
-    uint8 best_row = 0U;
-    uint16 row;
-    bool transition_found = false;
-    bool tangent_found = false;
-
-    // 原过渡带条件只负责证明这里存在十字拐角，不再用横坐标极值决定拐点。
-    for(row = IMAGE_CROSS_CORNER_SEARCH_TOP; row <= IMAGE_CROSS_CORNER_SEARCH_BOTTOM; row++)
-    {
-        uint8 above_invalid = 0U;
-        uint8 below_valid = 0U;
-        uint16 sample;
-
-        if(!image_process_cross_lane_row_valid((uint8)row))
-        {
-            continue;
-        }
-
-        for(sample = row - IMAGE_CROSS_CONTEXT_ROWS; sample < row; sample++)
-        {
-            if(!image_process_cross_lane_row_valid((uint8)sample))
-            {
-                above_invalid++;
-            }
-        }
-        for(sample = row;
-            sample <= row + IMAGE_CROSS_CONTEXT_ROWS && sample <= IMAGE_CROSS_ROI_BOTTOM;
-            sample++)
-        {
-            if(image_process_cross_lane_row_valid((uint8)sample))
-            {
-                below_valid++;
-            }
-        }
-
-        if(above_invalid < IMAGE_CROSS_ABOVE_INVALID_MIN
-            || below_valid < IMAGE_CROSS_BELOW_VALID_MIN)
-        {
-            continue;
-        }
-
-        transition_found = true;
-        break;
-    }
-
-    if(!transition_found)
-    {
-        return false;
-    }
-
-    for(row = IMAGE_CROSS_TANGENT_SEARCH_TOP; row <= IMAGE_CROSS_TANGENT_SEARCH_BOTTOM; row++)
-    {
-        int32 local_slope;
-        int32 repair_slope;
-        int32 slope_difference;
-        uint16 score;
-        uint16 sample;
-        bool continuous = true;
-
-        for(sample = row - IMAGE_CROSS_TANGENT_HALF_WINDOW;
-            sample <= row + IMAGE_CROSS_TANGENT_HALF_WINDOW;
-            sample++)
-        {
-            if(!edge_valid[sample]
-                || edge[sample] <= IMAGE_CROSS_TANGENT_EDGE_MARGIN
-                || edge[sample] + IMAGE_CROSS_TANGENT_EDGE_MARGIN >= MT9V03X_W)
-            {
-                continuous = false;
-                break;
-            }
-        }
-        if(!continuous)
-        {
-            continue;
-        }
-
-        for(sample = row - IMAGE_CROSS_TANGENT_HALF_WINDOW;
-            sample < row + IMAGE_CROSS_TANGENT_HALF_WINDOW;
-            sample++)
-        {
-            int32 step = (int32)edge[sample + 1U] - edge[sample];
-
-            if(step < 0)
-            {
-                step = -step;
-            }
-            if(step > IMAGE_CROSS_TANGENT_MAX_STEP)
-            {
-                continuous = false;
-                break;
-            }
-        }
-        if(!continuous)
-        {
-            continue;
-        }
-
-        local_slope = ((int32)edge[row + IMAGE_CROSS_TANGENT_HALF_WINDOW]
-            - edge[row - IMAGE_CROSS_TANGENT_HALF_WINDOW])
-            * IMAGE_CROSS_SLOPE_SCALE
-            / (int32)(2U * IMAGE_CROSS_TANGENT_HALF_WINDOW);
-        repair_slope = (bottom_col - edge[row]) * IMAGE_CROSS_SLOPE_SCALE
-            / (int32)((MT9V03X_H - 1U) - row);
-        slope_difference = local_slope - repair_slope;
-        if(slope_difference < 0)
-        {
-            slope_difference = -slope_difference;
-        }
-        score = (uint16)slope_difference;
-
-        if(!tangent_found || score < best_score)
-        {
-            tangent_found = true;
-            best_score = score;
-            best_col = (uint8)edge[row];
-            best_row = (uint8)row;
-        }
-    }
-
-    if(!tangent_found)
-    {
-        return false;
-    }
-
-    *corner_col = best_col;
-    *corner_row = best_row;
-    return true;
-}
-
-static bool image_process_find_cross_pair(
-    const uint8 image[][MT9V03X_W],
-    uint8 seed_col,
-    uint8 *left_col,
-    uint8 *left_row,
-    uint8 *right_col,
-    uint8 *right_row)
-{
-    uint16 row;
-    bool left_found;
-    bool right_found;
-
-    image_cross_scan_seed_col = seed_col;
-    // 每一行都从同一个种子列重新扫描，避免普通边线跟踪在横向支路上越走越远。
-    for(row = IMAGE_CROSS_ROI_TOP; row <= IMAGE_CROSS_ROI_BOTTOM; row++)
-    {
-        image_cross_scan_left[row] = image_process_find_left_edge(
-            image,
-            (uint8)row,
-            seed_col,
-            0,
-            &image_cross_scan_left_valid[row]);
-        image_cross_scan_right[row] = image_process_find_right_edge(
-            image,
-            (uint8)row,
-            seed_col,
-            MT9V03X_W - 1U,
-            &image_cross_scan_right_valid[row]);
-    }
-
-    left_found = image_process_find_cross_corner(true, left_col, left_row);
-    right_found = image_process_find_cross_corner(false, right_col, right_row);
-
-    if(left_found && right_found && *left_col < *right_col)
-    {
-        uint8 row_difference = image_process_abs_diff(*left_row, *right_row);
-        uint16 gap = (uint16)*right_col - *left_col;
-        uint8 corner_mid = (uint8)(((uint16)*left_col + *right_col) / 2U);
-
-        if(gap >= IMAGE_CROSS_CORNER_MIN_GAP
-            && gap <= IMAGE_CROSS_CORNER_MAX_GAP
-            && row_difference <= IMAGE_CROSS_CORNER_MAX_ROW_DIFF
-            && image_process_abs_diff(corner_mid, seed_col)
-                <= IMAGE_CROSS_MID_MAX_OFFSET)
-        {
+            seed->row = (uint8)row;
+            seed->col = (uint8)(left + 1);
             return true;
         }
     }
-
     return false;
 }
 
-static void image_process_detect_cross(const uint8 image[][MT9V03X_W])
+static bool image_find_right_seed(
+    const uint8 image[][MT9V03X_W],
+    Image_Track_Point *seed)
 {
-    uint8 left_col = 0U;
-    uint8 left_row = 0U;
-    uint8 right_col = 0U;
-    uint8 right_row = 0U;
-    bool pair_valid;
+    int16 row;
 
-    pair_valid = false;
-    if(image_process_has_cross_white_band(image))
+    for(row = IMAGE_SEED_ROW_BOTTOM; row >= IMAGE_SEED_ROW_TOP; row -= IMAGE_SEED_ROW_STEP)
     {
-        // 优先沿用当前参考列，使已经验证准确的正入、偏左姿态保持原角点。
-        pair_valid = image_process_find_cross_pair(
-            image,
-            image_reference_col,
-            &left_col,
-            &left_row,
-            &right_col,
-            &right_row);
+        int16 left = IMAGE_SEED_CENTER_COL;
+        int16 right = MT9V03X_W - 1 - IMAGE_TRACE_MIN_MARGIN;
 
-        // 斜入时参考列可能落入左/右支路；主搜索失败后用固定画面中心兜底。
-        if(!pair_valid && image_reference_col != MT9V03X_W / 2U)
+        while(left < right)
         {
-            pair_valid = image_process_find_cross_pair(
-                image,
-                MT9V03X_W / 2U,
-                &left_col,
-                &left_row,
-                &right_col,
-                &right_row);
+            int16 middle = (left + right + 1) >> 1;
+            int16 col8 = middle + 8;
+            int16 col25 = middle + 25;
+
+            if(col8 > MT9V03X_W - 1 - IMAGE_TRACE_MIN_MARGIN)
+                col8 = MT9V03X_W - 1 - IMAGE_TRACE_MIN_MARGIN;
+            if(col25 > MT9V03X_W - 1 - IMAGE_TRACE_MIN_MARGIN)
+                col25 = MT9V03X_W - 1 - IMAGE_TRACE_MIN_MARGIN;
+            if(image[row][middle] < image_right_seed_threshold
+                && image[row][col8] < image_right_seed_threshold
+                && image[row][col25] < image_right_seed_threshold)
+            {
+                right = middle - 1;
+            }
+            else
+            {
+                left = middle;
+            }
+        }
+
+        if(right >= IMAGE_TRACE_MIN_MARGIN
+            && right < MT9V03X_W - IMAGE_TRACE_MIN_MARGIN
+            && image[row][right - 2] >= image_right_seed_threshold
+            && image_seed_edge_has_contrast(image, (uint8)row, (uint8)right))
+        {
+            seed->row = (uint8)row;
+            seed->col = (uint8)(right - 1);
+            return true;
+        }
+    }
+    return false;
+}
+
+static uint8 image_trace_border(
+    const uint8 image[][MT9V03X_W],
+    Image_Track_Point seed,
+    bool trace_left,
+    Image_Track_Point output[IMAGE_PROCESS_MAX_POINTS])
+{
+    uint8 row = seed.row;
+    uint8 col = seed.col;
+    uint8 direction = 0U;
+    uint8 turns = 0U;
+    uint8 update_count = 0U;
+    uint8 point_count = 0U;
+    uint8 threshold = image_local_threshold(image, row, col);
+
+    while(row > IMAGE_TRACE_MIN_MARGIN
+        && row < MT9V03X_H - IMAGE_TRACE_MIN_MARGIN
+        && col > IMAGE_TRACE_MIN_MARGIN
+        && col < MT9V03X_W - IMAGE_TRACE_MIN_MARGIN
+        && point_count < IMAGE_PROCESS_MAX_POINTS
+        && turns < 4U)
+    {
+        int16 forward_row;
+        int16 forward_col;
+        int16 side_row;
+        int16 side_col;
+        const int8 (*side_direction)[2] = trace_left ? image_trace_left : image_trace_right;
+
+        update_count++;
+        if(update_count >= 2U)
+        {
+            threshold = image_local_threshold(image, row, col);
+            update_count = 0U;
+        }
+
+        forward_row = (int16)row + image_trace_forward[direction][0];
+        forward_col = (int16)col + image_trace_forward[direction][1];
+        side_row = (int16)row + side_direction[direction][0];
+        side_col = (int16)col + side_direction[direction][1];
+
+        if(image[forward_row][forward_col] < threshold)
+        {
+            direction = trace_left ? ((direction + 1U) & 3U) : ((direction + 3U) & 3U);
+            turns++;
+        }
+        else if(image[side_row][side_col] < threshold)
+        {
+            row = (uint8)forward_row;
+            col = (uint8)forward_col;
+            output[point_count].row = row;
+            output[point_count].col = col;
+            point_count++;
+            turns = 0U;
+        }
+        else
+        {
+            row = (uint8)side_row;
+            col = (uint8)side_col;
+            output[point_count].row = row;
+            output[point_count].col = col;
+            point_count++;
+            turns = 0U;
+            direction = trace_left ? ((direction + 3U) & 3U) : ((direction + 1U) & 3U);
+        }
+
+        if(row == seed.row && col == seed.col && turns == 0U)
+        {
+            break;
+        }
+    }
+    return point_count;
+}
+
+static void image_transform_border(
+    const Image_Track_Point input[IMAGE_PROCESS_MAX_POINTS],
+    uint8 count,
+    Image_Bird_Point output[IMAGE_PROCESS_MAX_POINTS])
+{
+    uint8 index;
+
+    for(index = 0U; index < count; index++)
+    {
+        uint32 lut_index = ((uint32)input[index].row * MT9V03X_W
+            + input[index].col) * 2U;
+
+        output[index].x = image_perspective_lut[lut_index];
+        output[index].y = image_perspective_lut[lut_index + 1U];
+    }
+}
+
+static void image_filter_bird_line(Image_Bird_Point line[IMAGE_PROCESS_MAX_POINTS], uint8 count)
+{
+    uint8 index;
+
+    for(index = 1U; index < count; index++)
+    {
+        line[index].x = (uint8)(((uint16)line[index - 1U].x + line[index].x) / 2U);
+        line[index].y = (uint8)(((uint16)line[index - 1U].y + line[index].y) / 2U);
+    }
+}
+
+static uint8 image_resample_bird_line(
+    Image_Bird_Point line[IMAGE_PROCESS_MAX_POINTS],
+    uint8 count,
+    uint8 distance)
+{
+    int16 remain = 0;
+    uint8 output_count = 0U;
+    uint8 index;
+
+    if(count < 2U || distance == 0U)
+    {
+        return 0U;
+    }
+
+    for(index = 0U; index + 1U < count; index++)
+    {
+        int16 x0 = line[index].x;
+        int16 y0 = line[index].y;
+        int16 dx = (int16)line[index + 1U].x - x0;
+        int16 dy = (int16)line[index + 1U].y - y0;
+        uint16 length = image_sqrt_u32((uint32)(dx * dx + dy * dy));
+
+        if(length == 0U)
+        {
+            continue;
+        }
+        while(output_count < IMAGE_PROCESS_MAX_POINTS)
+        {
+            int32 tx;
+            int32 ty;
+
+            if(remain >= (int16)length)
+            {
+                remain -= (int16)length;
+                break;
+            }
+            tx = (int32)x0 * length + (int32)dx * remain;
+            ty = (int32)y0 * length + (int32)dy * remain;
+            image_resample_scratch[output_count].x = image_limit_u8(tx / length, 0U, MT9V03X_H - 1U);
+            image_resample_scratch[output_count].y = image_limit_u8(ty / length, 0U, MT9V03X_W - 1U);
+            output_count++;
+            remain += distance;
         }
     }
 
-    if(pair_valid)
+    if(output_count == 0U)
     {
-        image_cross_left_col = left_col;
-        image_cross_left_row = left_row;
-        image_cross_right_col = right_col;
-        image_cross_right_row = right_row;
-        image_cross_corners_valid = true;
-        image_cross_missed_count = 0U;
-        if(image_cross_confirm_count < IMAGE_CROSS_CONFIRM_FRAMES)
+        return 0U;
+    }
+    memcpy(line, image_resample_scratch, (uint32)output_count * sizeof(Image_Bird_Point));
+    return output_count;
+}
+
+static uint8 image_centerline_from_border(
+    const Image_Bird_Point border[IMAGE_PROCESS_MAX_POINTS],
+    uint8 count,
+    bool from_left,
+    Image_Bird_Point center[IMAGE_PROCESS_MAX_POINTS])
+{
+    uint8 index;
+
+    if(count < 3U)
+    {
+        return 0U;
+    }
+    for(index = 1U; index < count; index++)
+    {
+        uint8 index0 = (index > 2U) ? (index - 2U) : 0U;
+        uint8 index1 = (index + 2U < count) ? (index + 2U) : (count - 1U);
+        int16 dx = (int16)border[index1].x - border[index0].x;
+        int16 dy = (int16)border[index1].y - border[index0].y;
+        uint16 length = image_sqrt_u32((uint32)(dx * dx + dy * dy));
+        int32 center_x;
+        int32 center_y;
+
+        if(length == 0U)
         {
-            image_cross_confirm_count++;
+            center[index] = border[index];
+            continue;
         }
-        image_cross_state = (image_cross_confirm_count >= IMAGE_CROSS_CONFIRM_FRAMES)
-            ? IMAGE_CROSS_STATE_DETECTED
-            : IMAGE_CROSS_STATE_CANDIDATE;
+        if(from_left)
+        {
+            center_x = (int32)border[index].x + ((int32)dy * IMAGE_TRACK_HALF_WIDTH_UNITS) / length;
+            center_y = (int32)border[index].y - ((int32)dx * IMAGE_TRACK_HALF_WIDTH_UNITS) / length;
+        }
+        else
+        {
+            center_x = (int32)border[index].x - ((int32)dy * IMAGE_TRACK_HALF_WIDTH_UNITS) / length;
+            center_y = (int32)border[index].y + ((int32)dx * IMAGE_TRACK_HALF_WIDTH_UNITS) / length;
+        }
+        center[index].x = image_limit_u8(center_x, 0U, MT9V03X_H - 1U);
+        center[index].y = image_limit_u8(center_y, 0U, MT9V03X_W - 1U);
     }
-    else if(image_cross_state == IMAGE_CROSS_STATE_DETECTED
-        && image_cross_missed_count < IMAGE_CROSS_HOLD_MISSED_FRAMES)
+    center[0] = center[1];
+    return count;
+}
+
+static Image_Track_Point image_bird_to_image(Image_Bird_Point point)
+{
+    Image_Track_Point result;
+    uint8 row = image_perspective_source_row[point.x];
+    int16 lateral_units = (int16)point.y - (int16)IMAGE_PERSPECTIVE_CENTER_COL;
+    int32 lateral_mm = (int32)lateral_units * (int32)IMAGE_PERSPECTIVE_GRID_MM;
+    int32 lateral_q8 = lateral_mm * (int32)image_perspective_lane_width_q8[row]
+        / (int32)IMAGE_PERSPECTIVE_TRACK_WIDTH_MM;
+    int32 col_q8 = image_perspective_lane_center_q8[row]
+        + lateral_q8;
+
+    result.row = row;
+    result.col = image_limit_u8((col_q8 + 128) / 256, 0U, MT9V03X_W - 1U);
+    return result;
+}
+
+static uint8 image_find_target_index(uint8 lookahead_cm)
+{
+    uint16 lookahead_mm = (uint16)lookahead_cm * 10U;
+    uint8 target_x = (lookahead_mm >= IMAGE_PERSPECTIVE_NEAR_X * IMAGE_PERSPECTIVE_GRID_MM)
+        ? 0U
+        : (uint8)(IMAGE_PERSPECTIVE_NEAR_X - lookahead_mm / IMAGE_PERSPECTIVE_GRID_MM);
+    uint8 best_index = 0U;
+    uint8 best_difference = 255U;
+    uint8 index;
+
+    for(index = 0U; index < image_centerline_count; index++)
     {
-        // 短暂丢失时保留已确认的角点，防止调试标记一帧一闪。
-        image_cross_missed_count++;
+        uint8 difference = (image_centerline_bird[index].x >= target_x)
+            ? (image_centerline_bird[index].x - target_x)
+            : (target_x - image_centerline_bird[index].x);
+        if(difference < best_difference)
+        {
+            best_difference = difference;
+            best_index = index;
+        }
+    }
+    return best_index;
+}
+
+static void image_clear_result(void)
+{
+    image_left_border_count = 0U;
+    image_right_border_count = 0U;
+    image_left_bird_count = 0U;
+    image_right_bird_count = 0U;
+    image_centerline_count = 0U;
+    image_target_point_valid = false;
+    image_process_result.source_frame_valid = false;
+    image_process_result.centerline_valid = false;
+    image_process_result.target_reached = false;
+    image_process_result.confidence = 0U;
+    image_process_result.valid_distance_cm = 0U;
+    image_process_result.target_distance_cm = 0U;
+    image_process_result.left_border_count = 0U;
+    image_process_result.right_border_count = 0U;
+    image_process_result.centerline_count = 0U;
+    image_process_result.selected_side = IMAGE_TRACK_SIDE_NONE;
+}
+
+static void image_finish_frame(uint32 cycle_start, bool frame_processed)
+{
+    if(image_cycle_counter_ready && system_clock >= 1000000U)
+    {
+        uint32 elapsed_cycles = DWT->CYCCNT - cycle_start;
+        uint32 elapsed_us = elapsed_cycles / (system_clock / 1000000U);
+
+        image_process_result.process_time_us = (elapsed_us > 0xFFFFU)
+            ? 0xFFFFU
+            : (uint16)elapsed_us;
     }
     else
     {
-        image_cross_state = IMAGE_CROSS_STATE_NONE;
-        image_cross_corners_valid = false;
-        image_cross_confirm_count = 0U;
-        image_cross_missed_count = 0U;
+        image_process_result.process_time_us = 0U;
     }
-}
-
-static uint16 image_process_cross_interpolate_edge(
-    uint8 corner_col,
-    uint8 corner_row,
-    uint16 bottom_col,
-    uint8 row)
-{
-    int32 row_span = (int32)(MT9V03X_H - 1U) - corner_row;
-    int32 row_offset = (int32)row - corner_row;
-    int32 col_span = (int32)bottom_col - corner_col;
-    int32 col = corner_col;
-
-    if(row_span > 0)
+    image_new_result = true;
+    if(frame_processed)
     {
-        col += (col_span * row_offset) / row_span;
+        image_process_finish_handler();
     }
-    return image_process_limit_u8(col, 0U, MT9V03X_W - 1U);
-}
-
-// 学长方案：两个上拐点分别连接图像左下角和右下角，恢复十字中的纵向走廊。
-static void image_process_apply_cross_repair(void)
-{
-    uint8 start_row;
-    uint16 row;
-
-    if(image_cross_state != IMAGE_CROSS_STATE_DETECTED || !image_cross_corners_valid)
-    {
-        return;
-    }
-
-    // 两条补线必须从同一行开始参与中线，避免两角高度不同时只修补单侧。
-    start_row = (image_cross_left_row > image_cross_right_row)
-        ? image_cross_left_row
-        : image_cross_right_row;
-
-    for(row = start_row; row < MT9V03X_H; row++)
-    {
-        image_left_edge[row] = image_process_cross_interpolate_edge(
-            image_cross_left_col,
-            image_cross_left_row,
-            0U,
-            (uint8)row);
-        image_right_edge[row] = image_process_cross_interpolate_edge(
-            image_cross_right_col,
-            image_cross_right_row,
-            MT9V03X_W - 1U,
-            (uint8)row);
-        image_left_edge_valid[row] = true;
-        image_right_edge_valid[row] = true;
-    }
-}
-
-static void image_process_calculate_mid(void)
-{
-    uint32 weighted_sum = 0U;
-    uint16 weight_sum = 0U;
-    uint16 row;
-    uint8 current_weight = image_process_limit_u8(image_process_config.mid_filter_current, 0U, 100U);
-    uint8 current_mid;
-
-    for(row = 0U; row < MT9V03X_H; row++)
-    {
-        uint8 weight = image_process_row_weight((uint8)row);
-
-        image_mid_line[row] = (uint8)((image_left_edge[row] + image_right_edge[row]) / 2U);
-        weighted_sum += (uint32)image_mid_line[row] * weight;
-        weight_sum += weight;
-    }
-
-    current_mid = (uint8)(weighted_sum / weight_sum);
-    if(!image_has_last_mid)
-    {
-        image_final_mid = current_mid;
-        image_has_last_mid = true;
-    }
-    else
-    {
-        image_final_mid = (uint8)(((uint16)current_mid * current_weight
-            + (uint16)image_last_final_mid * (100U - current_weight) + 50U) / 100U);
-    }
-    image_last_final_mid = image_final_mid;
 }
 
 void image_process_init(void)
 {
-    image_process_config.reference_rows = 5U;
-    image_process_config.reference_cols = 80U;
-    image_process_config.black_threshold = 50U;
-    image_process_config.white_min_scale = 7U;
-    image_process_config.white_max_scale = 13U;
-    image_process_config.contrast_threshold = 20U;
-    image_process_config.contrast_offset = 3U;
-    image_process_config.search_range = 10U;
-    image_process_config.weight_center_row = 68U;
-    image_process_config.weight_span = 35U;
-    image_process_config.weight_peak = 20U;
-    image_process_config.mid_filter_current = 80U;
+    image_process_config.local_threshold_offset = 6U;
+    image_process_config.start_contrast_min = 15U;
+    image_process_config.min_border_points = 12U;
+    image_process_config.resample_step = 3U;
+    image_process_config.lookahead_cm = 75U;
+    image_process_config.target_gain_percent = 50U;
+    image_process_config.target_filter_current = 80U;
 
-    memset(image_left_edge, 0, sizeof(image_left_edge));
-    memset(image_right_edge, 0, sizeof(image_right_edge));
-    memset(image_mid_line, 0, sizeof(image_mid_line));
-    memset(image_left_edge_valid, 0, sizeof(image_left_edge_valid));
-    memset(image_right_edge_valid, 0, sizeof(image_right_edge_valid));
-    memset(image_cross_scan_left_valid, 0, sizeof(image_cross_scan_left_valid));
-    memset(image_cross_scan_right_valid, 0, sizeof(image_cross_scan_right_valid));
-    image_reference_col = MT9V03X_W / 2U;
-    image_reference_gray = 0U;
-    image_white_min = 0U;
-    image_white_max = 0U;
-    image_final_mid = MT9V03X_W / 2U;
-    image_last_final_mid = image_final_mid;
+    memset(image_left_border, 0, sizeof(image_left_border));
+    memset(image_right_border, 0, sizeof(image_right_border));
+    memset(image_centerline_image, 0, sizeof(image_centerline_image));
+    image_source_frame = NULL;
+    memset(image_left_bird, 0, sizeof(image_left_bird));
+    memset(image_right_bird, 0, sizeof(image_right_bird));
+    memset(image_centerline_bird, 0, sizeof(image_centerline_bird));
+    memset(&image_process_result, 0, sizeof(image_process_result));
+    image_left_seed_threshold = 128U;
+    image_right_seed_threshold = 128U;
+    image_seed_threshold_initialized = false;
+    image_last_final_mid = IMAGE_PERSPECTIVE_CENTER_COL;
     image_has_last_mid = false;
+    image_published_mid = IMAGE_PERSPECTIVE_CENTER_COL;
+    image_published_mid_valid = false;
     image_new_result = false;
-    image_bottom_white_ratio = 100U;
-    image_out_of_bounds = false;
-    image_out_of_bounds_confirm_count = 0U;
-    image_zebra_detected = false;
-    image_zebra_missed_count = 0U;
-    image_cross_state = IMAGE_CROSS_STATE_NONE;
-    image_cross_left_col = 0U;
-    image_cross_left_row = 0U;
-    image_cross_right_col = 0U;
-    image_cross_right_row = 0U;
-    image_cross_corners_valid = false;
-    image_cross_confirm_count = 0U;
-    image_cross_missed_count = 0U;
-    image_cross_scan_seed_col = MT9V03X_W / 2U;
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    image_cycle_counter_ready = ((DWT->CTRL & DWT_CTRL_NOCYCCNT_Msk) == 0U)
+        && ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0U);
+    image_process_result.final_mid = IMAGE_PERSPECTIVE_CENTER_COL;
+    image_clear_result();
 }
 
 void image_process_frame(void)
 {
-    const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
+    const uint8 (*image)[MT9V03X_W];
+    const uint8 *latest_frame;
+    Image_Track_Point left_seed;
+    Image_Track_Point right_seed;
+    bool left_seed_valid;
+    bool right_seed_valid;
+    bool left_valid;
+    bool right_valid;
+    uint8 target_index;
+    uint8 index;
+    uint8 raw_mid;
+    uint8 current_weight;
+    uint16 target_distance_difference_cm;
+    int32 target_offset;
+    uint8 minimum_x = IMAGE_PERSPECTIVE_NEAR_X;
+    uint8 chosen_count = 0U;
+    uint32 cycle_start = image_cycle_counter_ready ? DWT->CYCCNT : 0U;
 
-    image_process_calculate_threshold(image);
-    image_process_detect_zebra(image);
-    image_process_detect_out_of_bounds(image);
-    image_process_find_reference_col(image);
-    image_process_track_edges(image);
-    image_process_detect_cross(image);
-    image_process_apply_cross_repair();
-    image_process_calculate_mid();
-    image_new_result = true;
-    image_process_finish_handler();
+    image_clear_result();
+    image_sanitize_config();
+    image_release_frame(image_source_frame);
+    image_source_frame = NULL;
+    latest_frame = image_acquire_latest_frame();
+    if(latest_frame == NULL)
+    {
+        image_process_result.final_mid = image_last_final_mid;
+        image_published_mid_valid = false;
+        image_finish_frame(cycle_start, false);
+        return;
+    }
+    image_source_frame = latest_frame;
+    image = (const uint8 (*)[MT9V03X_W])image_source_frame;
+    image_process_result.source_frame_valid = true;
+    image_update_seed_thresholds(image);
+    left_seed_valid = image_find_left_seed(image, &left_seed);
+    right_seed_valid = image_find_right_seed(image, &right_seed);
+
+    if(left_seed_valid)
+    {
+        image_left_border_count = image_trace_border(
+            image, left_seed, true, image_left_border);
+    }
+    if(right_seed_valid)
+    {
+        image_right_border_count = image_trace_border(
+            image, right_seed, false, image_right_border);
+    }
+
+    left_valid = image_left_border_count >= image_process_config.min_border_points;
+    right_valid = image_right_border_count >= image_process_config.min_border_points;
+    if(left_valid)
+    {
+        image_transform_border(image_left_border, image_left_border_count, image_left_bird);
+        image_left_bird_count = image_left_border_count;
+        image_filter_bird_line(image_left_bird, image_left_bird_count);
+        image_left_bird_count = image_resample_bird_line(
+            image_left_bird, image_left_bird_count, image_process_config.resample_step);
+        left_valid = image_left_bird_count >= image_process_config.min_border_points;
+    }
+    if(right_valid)
+    {
+        image_transform_border(image_right_border, image_right_border_count, image_right_bird);
+        image_right_bird_count = image_right_border_count;
+        image_filter_bird_line(image_right_bird, image_right_bird_count);
+        image_right_bird_count = image_resample_bird_line(
+            image_right_bird, image_right_bird_count, image_process_config.resample_step);
+        right_valid = image_right_bird_count >= image_process_config.min_border_points;
+    }
+
+    if(left_valid && (!right_valid || image_left_bird_count >= image_right_bird_count))
+    {
+        image_centerline_count = image_centerline_from_border(
+            image_left_bird, image_left_bird_count, true, image_centerline_bird);
+        image_process_result.selected_side = IMAGE_TRACK_SIDE_LEFT;
+        chosen_count = image_left_bird_count;
+    }
+    else if(right_valid)
+    {
+        image_centerline_count = image_centerline_from_border(
+            image_right_bird, image_right_bird_count, false, image_centerline_bird);
+        image_process_result.selected_side = IMAGE_TRACK_SIDE_RIGHT;
+        chosen_count = image_right_bird_count;
+    }
+    else
+    {
+        image_process_result.final_mid = image_last_final_mid;
+        image_process_result.left_border_count = image_left_border_count;
+        image_process_result.right_border_count = image_right_border_count;
+        image_published_mid_valid = false;
+        image_finish_frame(cycle_start, true);
+        return;
+    }
+
+    image_filter_bird_line(image_centerline_bird, image_centerline_count);
+    image_centerline_count = image_resample_bird_line(
+        image_centerline_bird, image_centerline_count, IMAGE_CENTER_RESAMPLE_STEP);
+    if(image_centerline_count < image_process_config.min_border_points)
+    {
+        image_process_result.final_mid = image_last_final_mid;
+        image_process_result.left_border_count = image_left_border_count;
+        image_process_result.right_border_count = image_right_border_count;
+        image_published_mid_valid = false;
+        image_finish_frame(cycle_start, true);
+        return;
+    }
+
+    for(index = 0U; index < image_centerline_count; index++)
+    {
+        image_centerline_image[index] = image_bird_to_image(image_centerline_bird[index]);
+        if(image_centerline_bird[index].x < minimum_x)
+        {
+            minimum_x = image_centerline_bird[index].x;
+        }
+    }
+    image_process_result.valid_distance_cm =
+        (uint16)(((uint16)(IMAGE_PERSPECTIVE_NEAR_X - minimum_x) * IMAGE_PERSPECTIVE_GRID_MM) / 10U);
+
+    target_index = image_find_target_index(image_process_config.lookahead_cm);
+    image_target_point = image_centerline_image[target_index];
+    image_target_point_valid = true;
+    image_process_result.target_distance_cm = (uint16)(
+        ((uint16)(IMAGE_PERSPECTIVE_NEAR_X - image_centerline_bird[target_index].x)
+            * IMAGE_PERSPECTIVE_GRID_MM + 5U) / 10U);
+    target_distance_difference_cm =
+        (image_process_result.target_distance_cm >= image_process_config.lookahead_cm)
+        ? (image_process_result.target_distance_cm - image_process_config.lookahead_cm)
+        : (image_process_config.lookahead_cm - image_process_result.target_distance_cm);
+    image_process_result.target_reached =
+        target_distance_difference_cm <= IMAGE_TARGET_REACH_TOLERANCE_CM;
+    target_offset = (int32)image_target_point.col - (int32)IMAGE_PERSPECTIVE_CENTER_COL;
+    raw_mid = image_limit_u8(
+        (int32)IMAGE_PERSPECTIVE_CENTER_COL
+            + target_offset * (int32)image_process_config.target_gain_percent / 100,
+        0U,
+        MT9V03X_W - 1U);
+    current_weight = image_process_config.target_filter_current;
+    if(current_weight > 100U) current_weight = 100U;
+    if(!image_has_last_mid)
+    {
+        image_process_result.final_mid = raw_mid;
+        image_has_last_mid = true;
+    }
+    else
+    {
+        image_process_result.final_mid = (uint8)(
+            ((uint16)raw_mid * current_weight
+                + (uint16)image_last_final_mid * (100U - current_weight)
+                + 50U) / 100U);
+    }
+    image_last_final_mid = image_process_result.final_mid;
+    image_published_mid = image_process_result.final_mid;
+    image_published_mid_valid = true;
+    image_process_result.centerline_valid = true;
+    image_process_result.left_border_count = image_left_border_count;
+    image_process_result.right_border_count = image_right_border_count;
+    image_process_result.centerline_count = image_centerline_count;
+    image_process_result.confidence = image_limit_u8((uint32)chosen_count * 100U / 45U, 0U, 100U);
+    if(image_process_result.valid_distance_cm < image_process_config.lookahead_cm)
+    {
+        image_process_result.confidence = (uint8)(
+            (uint16)image_process_result.confidence
+            * image_process_result.valid_distance_cm
+            / image_process_config.lookahead_cm);
+    }
+
+    image_finish_frame(cycle_start, true);
 }
 
 void image_process_display(void)
 {
-    const uint8 *image = image_get_buffer();
-    uint16 row;
+    const uint8 *image = image_source_frame;
+    uint8 index;
+
+    if(image == NULL)
+    {
+        return;
+    }
 
     ips200_show_gray_image(0U, 0U, image, MT9V03X_W, MT9V03X_H,
         IMAGE_PROCESS_DISPLAY_WIDTH, IMAGE_PROCESS_DISPLAY_HEIGHT, 0U);
 
-    for(row = 0U; row < MT9V03X_H; row++)
+    for(index = 0U; index < image_left_border_count; index++)
     {
-        uint16 y = (row * IMAGE_PROCESS_DISPLAY_HEIGHT) / MT9V03X_H;
-        uint16 left_x = (image_left_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-        uint16 right_x = (image_right_edge[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-        uint16 mid_x = (image_mid_line[row] * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-        uint16 ref_x = (image_reference_col * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-
-        if(image_left_edge_valid[row])
-        {
-            ips200_draw_point(left_x, y, RGB565_RED);
-        }
-        if(image_right_edge_valid[row])
-        {
-            ips200_draw_point(right_x, y, RGB565_BLUE);
-        }
-        ips200_draw_point(mid_x, y, RGB565_GREEN);
-        ips200_draw_point(ref_x, y, RGB565_YELLOW);
+        ips200_draw_point(
+            (uint16)image_left_border[index].col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W,
+            (uint16)image_left_border[index].row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H,
+            RGB565_RED);
     }
-
-    if(image_cross_corners_valid)
+    for(index = 0U; index < image_right_border_count; index++)
     {
-        uint16 left_x = ((uint16)image_cross_left_col * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-        uint16 left_y = ((uint16)image_cross_left_row * IMAGE_PROCESS_DISPLAY_HEIGHT) / MT9V03X_H;
-        uint16 right_x = ((uint16)image_cross_right_col * IMAGE_PROCESS_DISPLAY_WIDTH) / MT9V03X_W;
-        uint16 right_y = ((uint16)image_cross_right_row * IMAGE_PROCESS_DISPLAY_HEIGHT) / MT9V03X_H;
+        ips200_draw_point(
+            (uint16)image_right_border[index].col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W,
+            (uint16)image_right_border[index].row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H,
+            RGB565_BLUE);
+    }
+    for(index = 0U; index < image_centerline_count; index++)
+    {
+        ips200_draw_point(
+            (uint16)image_centerline_image[index].col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W,
+            (uint16)image_centerline_image[index].row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H,
+            RGB565_GREEN);
+    }
+    if(image_target_point_valid)
+    {
+        uint16 x = (uint16)image_target_point.col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W;
+        uint16 y = (uint16)image_target_point.row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H;
+        uint16 x_end = (x + 3U < IMAGE_PROCESS_DISPLAY_WIDTH)
+            ? (x + 3U) : (IMAGE_PROCESS_DISPLAY_WIDTH - 1U);
+        uint16 y_end = (y + 3U < IMAGE_PROCESS_DISPLAY_HEIGHT)
+            ? (y + 3U) : (IMAGE_PROCESS_DISPLAY_HEIGHT - 1U);
 
-        ips200_draw_line(left_x - 3U, left_y, left_x + 3U, left_y, RGB565_MAGENTA);
-        ips200_draw_line(left_x, left_y - 3U, left_x, left_y + 3U, RGB565_MAGENTA);
-        ips200_draw_line(right_x - 3U, right_y, right_x + 3U, right_y, RGB565_CYAN);
-        ips200_draw_line(right_x, right_y - 3U, right_x, right_y + 3U, RGB565_CYAN);
+        ips200_draw_line((x >= 3U) ? x - 3U : 0U, y, x_end, y, RGB565_YELLOW);
+        ips200_draw_line(x, (y >= 3U) ? y - 3U : 0U, x, y_end, RGB565_YELLOW);
     }
 
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
     ips200_show_string(0U, 160U, "MID:");
-    ips200_show_uint(40U, 160U, image_final_mid, 3U);
-    ips200_show_string(88U, 160U, "REF:");
-    ips200_show_uint(128U, 160U, image_reference_col, 3U);
+    ips200_show_uint(40U, 160U, image_process_result.final_mid, 3U);
+    ips200_show_string(88U, 160U, "VALID:");
+    ips200_show_string(144U, 160U, image_process_result.centerline_valid ? "YES" : "NO ");
     ips200_set_color(RGB565_WHITE, RGB565_BLACK);
-    ips200_show_string(0U, 176U, "R:RED B:BLUE G:MID");
-    ips200_show_string(0U, 192U, "Y:REF  KEY4:BACK");
-    ips200_show_string(0U, 208U, "CROSS:");
-    if(image_cross_state == IMAGE_CROSS_STATE_DETECTED)
-    {
-        ips200_show_string(48U, 208U, "YES ");
-    }
-    else if(image_cross_state == IMAGE_CROSS_STATE_CANDIDATE)
-    {
-        ips200_show_string(48U, 208U, "CAND");
-    }
-    else
-    {
-        ips200_show_string(48U, 208U, "NONE");
-    }
-
-    ips200_show_string(0U, 224U, "BOT:");
-    ips200_show_uint(40U, 224U, image_bottom_white_ratio, 3U);
-    ips200_show_string(64U, 224U, "%");
-    ips200_show_string(72U, 224U, "OUT:");
-    ips200_show_string(112U, 224U, image_out_of_bounds ? "YES" : "NO ");
-    ips200_show_string(0U, 240U, "ZEBRA:");
-    ips200_show_string(56U, 240U, image_zebra_detected ? "YES" : "NO ");
+    ips200_show_string(0U, 176U, "L:");
+    ips200_show_uint(16U, 176U, image_left_border_count, 3U);
+    ips200_show_string(48U, 176U, "R:");
+    ips200_show_uint(64U, 176U, image_right_border_count, 3U);
+    ips200_show_string(96U, 176U, "C:");
+    ips200_show_uint(112U, 176U, image_centerline_count, 3U);
+    ips200_show_string(0U, 192U, "DIST:");
+    ips200_show_uint(48U, 192U, image_process_result.valid_distance_cm, 3U);
+    ips200_show_string(80U, 192U, "cm CONF:");
+    ips200_show_uint(152U, 192U, image_process_result.confidence, 3U);
+    ips200_show_string(0U, 208U, "TGT:");
+    ips200_show_uint(32U, 208U, image_process_result.target_distance_cm, 3U);
+    ips200_show_string(64U, 208U, "cm REACH:");
+    ips200_show_string(144U, 208U, image_process_result.target_reached ? "YES" : "NO ");
+    ips200_show_string(0U, 224U, "Y:TARGET KEY4:BACK");
+    ips200_show_string(0U, 240U, "TIME:");
+    ips200_show_uint(48U, 240U, image_process_result.process_time_us, 4U);
+    ips200_show_string(88U, 240U, "us");
 }
 
 bool image_process_take_new_result(void)
@@ -1112,82 +909,65 @@ bool image_process_take_new_result(void)
     {
         return false;
     }
-
     image_new_result = false;
     return true;
 }
 
-uint8 image_process_get_final_mid(void)
+const Image_Process_Result *image_process_get_result(void)
 {
-    return image_final_mid;
+    return &image_process_result;
 }
 
-uint8 image_process_get_reference_col(void)
+bool image_process_get_steering_mid(uint8 *mid)
 {
-    return image_reference_col;
-}
-
-uint8 image_process_get_reference_gray(void)
-{
-    return image_reference_gray;
-}
-
-uint8 image_process_get_white_min(void)
-{
-    return image_white_min;
-}
-
-uint8 image_process_get_white_max(void)
-{
-    return image_white_max;
-}
-
-uint8 image_process_get_bottom_white_ratio(void)
-{
-    return image_bottom_white_ratio;
-}
-
-bool image_process_is_out_of_bounds(void)
-{
-    return image_out_of_bounds;
-}
-
-bool image_process_is_zebra_detected(void)
-{
-    return image_zebra_detected;
-}
-
-image_cross_state_enum image_process_get_cross_state(void)
-{
-    return image_cross_state;
-}
-
-bool image_process_get_cross_corners(
-    uint8 *left_col,
-    uint8 *left_row,
-    uint8 *right_col,
-    uint8 *right_row)
-{
-    if(!image_cross_corners_valid)
+    if(mid == NULL || !image_published_mid_valid)
     {
         return false;
     }
+    *mid = image_published_mid;
+    return true;
+}
 
-    if(left_col != NULL)
+const uint8 *image_process_get_source_frame(void)
+{
+    return image_process_result.source_frame_valid
+        ? image_source_frame
+        : NULL;
+}
+
+const Image_Track_Point *image_process_get_left_border(uint8 *count)
+{
+    if(count != NULL) *count = image_left_border_count;
+    return image_left_border;
+}
+
+const Image_Track_Point *image_process_get_right_border(uint8 *count)
+{
+    if(count != NULL) *count = image_right_border_count;
+    return image_right_border;
+}
+
+const Image_Track_Point *image_process_get_centerline_image(uint8 *count)
+{
+    if(count != NULL) *count = image_centerline_count;
+    return image_centerline_image;
+}
+
+const Image_Bird_Point *image_process_get_centerline_bird(uint8 *count)
+{
+    if(count != NULL) *count = image_centerline_count;
+    return image_centerline_bird;
+}
+
+bool image_process_get_target_point(Image_Track_Point *point)
+{
+    if(!image_target_point_valid)
     {
-        *left_col = image_cross_left_col;
+        return false;
     }
-    if(left_row != NULL)
+    if(point != NULL)
     {
-        *left_row = image_cross_left_row;
-    }
-    if(right_col != NULL)
-    {
-        *right_col = image_cross_right_col;
-    }
-    if(right_row != NULL)
-    {
-        *right_row = image_cross_right_row;
+        *point = image_target_point;
     }
     return true;
 }

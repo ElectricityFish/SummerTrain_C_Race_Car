@@ -373,7 +373,7 @@ void menu_init(void)
 		}
 	}
 
-	//图像目录包含采集帧率、处理结果预览和基础巡线参数。
+	//图像目录包含采集帧率、HFK点跟踪结果预览和运行参数。
 	image_folder = create_menu_folder_dynamic(&head, "Image");
 	image_fps_menu_value = image_get_capture_fps();
 	image_fps_item = create_menu_number_dynamic(image_folder, "FPS", &image_fps_menu_value, uint16_Box);
@@ -385,18 +385,13 @@ void menu_init(void)
 	process_folder = create_menu_folder_dynamic(image_folder, "Process");
 	if(process_folder != NULL)
 	{
-		create_menu_number_range_dynamic(process_folder, "RefRows", &image_process_config.reference_rows, uint8_Box, 1.0f, 20.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "RefCols", &image_process_config.reference_cols, uint8_Box, 20.0f, 180.0f, 2.0f);
-		create_menu_number_range_dynamic(process_folder, "Black", &image_process_config.black_threshold, uint8_Box, 0.0f, 200.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WhiteMin", &image_process_config.white_min_scale, uint8_Box, 1.0f, 10.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WhiteMax", &image_process_config.white_max_scale, uint8_Box, 10.0f, 20.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "Contrast", &image_process_config.contrast_threshold, uint8_Box, 1.0f, 100.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "Offset", &image_process_config.contrast_offset, uint8_Box, 1.0f, 8.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "Range", &image_process_config.search_range, uint8_Box, 1.0f, 60.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WeightRow", &image_process_config.weight_center_row, uint8_Box, 0.0f, 119.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "LocalCap", &image_process_config.local_threshold_offset, uint8_Box, 0.0f, 30.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "SeedDiff", &image_process_config.start_contrast_min, uint8_Box, 5.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "MinPoints", &image_process_config.min_border_points, uint8_Box, 5.0f, 60.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Resample", &image_process_config.resample_step, uint8_Box, 1.0f, 8.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "Lookahead", &image_process_config.lookahead_cm, uint8_Box, 30.0f, 120.0f, 5.0f);
+		create_menu_number_range_dynamic(process_folder, "TargetGain", &image_process_config.target_gain_percent, uint8_Box, 20.0f, 100.0f, 5.0f);
+		create_menu_number_range_dynamic(process_folder, "TargetFilt", &image_process_config.target_filter_current, uint8_Box, 0.0f, 100.0f, 5.0f);
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。

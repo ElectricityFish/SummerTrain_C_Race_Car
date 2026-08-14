@@ -54,6 +54,17 @@ void dma_set_count (dma_channel_enum ch, const uint16 transfer_count)
 }
 
 //-------------------------------------------------------------------------------------------------------------------
+// 函数简介     DMA 传输目标地址设置（必须在通道关闭时调用）
+// 参数说明     ch              选择 DMA 通道
+// 参数说明     memory_add      存储器目标地址
+// 返回参数     void
+//-------------------------------------------------------------------------------------------------------------------
+void dma_set_destination (dma_channel_enum ch, const uint32 memory_add)
+{
+    dma_index[(ch & 0xF0) >> 4]->CH[ch & 0x0f].CMAR = memory_add;
+}
+
+//-------------------------------------------------------------------------------------------------------------------
 // 函数简介     dma 传输使能
 // 参数说明     ch              选择 dma 通道 (详见 zf_driver_dma.h 中枚举 dma_channel_enum 定义)
 // 返回参数     void
@@ -89,9 +100,9 @@ void dma_disable (dma_channel_enum ch)
 //-------------------------------------------------------------------------------------------------------------------
 void dma_camera_init (dma_channel_enum ch, const uint32 size, const uint32 peripheral_add, const uint32 memory_add)
 {
-    RCC->AHB1ENR |= (0x00200000 << ((ch & 0xF0) >> 4));                         // 使能 DMA 时钟
-    RCC->AHB1RSTR |= (0x00200000 << ((ch & 0xF0) >> 4));                        // 复位 DMA 外设
-    RCC->AHB1RSTR &= ~(0x00200000 << ((ch & 0xF0) >> 4));                       // 复位 结束
+    RCC->AHB1ENR |= (0x00200000UL << ((ch & 0xF0) >> 4));                       // 使能 DMA 时钟
+    RCC->AHB1RSTR |= (0x00200000UL << ((ch & 0xF0) >> 4));                      // 复位 DMA 外设
+    RCC->AHB1RSTR &= ~(0x00200000UL << ((ch & 0xF0) >> 4));                     // 复位 结束
 
     dma_index[(ch & 0xF0) >> 4]->CH[ch & 0x0f].CNDTR = size;                    // 传输数量
     dma_index[(ch & 0xF0) >> 4]->CH[ch & 0x0f].CPAR = peripheral_add;           // 外设地址

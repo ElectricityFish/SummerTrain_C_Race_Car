@@ -57,6 +57,7 @@ typedef enum                                                                    
 
 
 void    dma_set_count      (dma_channel_enum ch, const uint16 transfer_count);
+void    dma_set_destination(dma_channel_enum ch, const uint32 memory_add);
 void    dma_enable         (dma_channel_enum ch);
 void    dma_disable        (dma_channel_enum ch);
 void    dma_camera_init    (dma_channel_enum ch, const uint32 size, const uint32 peripheral_add, const uint32 memory_add);
