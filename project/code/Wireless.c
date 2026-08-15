@@ -154,7 +154,7 @@ static bool wireless_image_send_processed(uint8 channel_id)
     const Image_Track_Point *centerline;
     const Image_Process_Result *result = image_process_get_result();
     Image_Track_Point target;
-    bool target_valid = image_process_get_target_point(&target);
+    bool target_valid = image_process_get_steering_target_point(&target);
     uint8 left_count;
     uint8 right_count;
     uint8 center_count;

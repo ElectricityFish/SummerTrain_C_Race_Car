@@ -389,9 +389,9 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "SeedDiff", &image_process_config.start_contrast_min, uint8_Box, 5.0f, 100.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "MinPoints", &image_process_config.min_border_points, uint8_Box, 5.0f, 60.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Resample", &image_process_config.resample_step, uint8_Box, 1.0f, 8.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "Lookahead", &image_process_config.lookahead_cm, uint8_Box, 30.0f, 120.0f, 5.0f);
-		create_menu_number_range_dynamic(process_folder, "TargetGain", &image_process_config.target_gain_percent, uint8_Box, 20.0f, 100.0f, 5.0f);
-		create_menu_number_range_dynamic(process_folder, "TargetFilt", &image_process_config.target_filter_current, uint8_Box, 0.0f, 100.0f, 5.0f);
+		create_menu_number_range_dynamic(process_folder, "SteerNear", &image_process_config.steering_near_cm, uint8_Box, 35.0f, 60.0f, 5.0f);
+		create_menu_number_range_dynamic(process_folder, "SteerGain", &image_process_config.steering_gain_percent, uint16_Box, 50.0f, 300.0f, 5.0f);
+		create_menu_number_range_dynamic(process_folder, "SteerFilt", &image_process_config.steering_filter_current, uint8_Box, 0.0f, 100.0f, 5.0f);
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。

@@ -229,6 +229,7 @@ static void car_state_enter_protect(uint8 reason)
 
 static void servo_control_reset_pid(void)
 {
+	servo_pid.Target = 0.0f;
 	servo_pid.Actual = 0.0f;
 	servo_pid.Out = 0.0f;
 	servo_pid.Error0 = 0.0f;
@@ -249,19 +250,19 @@ void control_init(void)
     wireless_control_enabled_last = 0U;
     car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
 
-    // PID 的 Target/Actual 单位均为图像列坐标，Out 的单位为上层逻辑转角（度）。
-    servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-	servo_pid.KpMin = 0.35f;
-	servo_pid.KpMax = 0.75f;
-    servo_pid.ErrorFull = 35.0f;
+    // HFK纯追踪已经给出带方向的几何转角；PID只负责一比一跟随、变化率阻尼和横摆阻尼。
+    servo_pid.Target = 0.0f;
+	servo_pid.KpMin = 1.0f;
+	servo_pid.KpMax = 1.0f;
+    servo_pid.ErrorFull = 30.0f;
     servo_pid.Ki = 0.0f;
     servo_pid.Kd = 0.3f;
     // 学长代码的 Kd2=0.25 作用于 gyro_raw*0.01；折算到 deg/s 后约为 0.036，先取 0.04 起调。
     // 左转横摆角速度为正，PID 中的 -Kd2*YawRate 会给出右转修正，形成负反馈。
     servo_pid.Kd2 = 0.05f;
-    // PID 不再重复限制舵机行程；最终角度由 servomotor_set_angle() 按安装边界裁剪。
-    servo_pid.OutMax = 55.0f;
-    servo_pid.OutMin = -55.0f;
+    // PID限幅与实车舵机安全行程一致，避免长期依赖驱动层二次裁剪。
+    servo_pid.OutMax = SERVOMOTOR_CONTROL_LEFT_MAX_ANGLE - SERVOMOTOR_CONTROL_CENTER_ANGLE;
+    servo_pid.OutMin = SERVOMOTOR_CONTROL_RIGHT_MAX_ANGLE - SERVOMOTOR_CONTROL_CENTER_ANGLE;
 
     servo_control_reset_pid();
     servo_control_enabled = true;
@@ -356,23 +357,22 @@ void servo_control_set_enabled(bool enabled)
 void servo_control(void)
 {
     float control_angle;
-    uint8 steering_mid;
+    int16 steering_angle_x10;
 
     if(!servo_control_enabled || (common_state != COMMON_STATE_RUNNING))
     {
         return;
     }
 
-	// 无效中心线不再伪装成有效MID输入PID；此帧保持最近一次舵机命令。
-	if(!image_process_get_steering_mid(&steering_mid))
+	// 无效中心线不发布纯追踪角；此帧保持最近一次舵机命令。
+	if(!image_process_get_steering_angle_x10(&steering_angle_x10))
 	{
 		return;
 	}
 
-	// servo_pid_up_date 内部使用 Error = Target - Actual，并按 |Error| 动态计算 KpNow。
-    // 赛道中线位于图像右侧时，输出为负，配合本车 90 度中位对应右转。
-    servo_pid.Target = MT9V03X_W / 2.0f + SERVO_CONTROL_IMAGE_CENTER_OFFSET;
-    servo_pid.Actual = (float)steering_mid;
+	// 纯追踪角正值为左转、负值为右转；Target直接使用角度，Actual固定为零。
+    servo_pid.Target = (float)steering_angle_x10 / 10.0f;
+    servo_pid.Actual = 0.0f;
     // Z 轴是本车横摆轴；直接使用最近一次采样并换算为 deg/s，不经过姿态解算中的量化。
     servo_pid.YawRate = mpu6050_gyro_transition(mpu6050_gyro_z_data);
     servo_pid_up_date(&servo_pid);

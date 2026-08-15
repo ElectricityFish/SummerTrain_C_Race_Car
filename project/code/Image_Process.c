@@ -22,7 +22,12 @@
 #define IMAGE_SEED_SIDE_SAMPLE_WIDTH       (16U)
 #define IMAGE_TRACE_MIN_MARGIN             (3)
 #define IMAGE_CENTER_RESAMPLE_STEP         (2U)
-#define IMAGE_TARGET_REACH_TOLERANCE_CM    (4U)
+#define IMAGE_NEAR_REACH_TOLERANCE_CM      (4U)
+#define IMAGE_WHEELBASE_MM                  (200U)
+#define IMAGE_WHEELBASE_UNITS               ((int32)((IMAGE_WHEELBASE_MM + IMAGE_PERSPECTIVE_GRID_MM / 2U) / IMAGE_PERSPECTIVE_GRID_MM))
+#define IMAGE_PURE_PURSUIT_MAX_ANGLE_X10    (300)
+#define IMAGE_PURE_PURSUIT_DEADBAND_X10     (10)
+#define IMAGE_STEERING_COMMAND_LIMIT_X10    (250)
 // 必须保持为有符号数：边界切向量 dx/dy 可能为负。
 // 若这里保留 U 后缀，C 的通常算术转换会把负方向量转成巨大无符号数，
 // 使右边界生成的中心线被饱和到最右列 187（最终 MID 恰好变成 140）。
@@ -60,15 +65,15 @@ static uint8 image_centerline_count;
 static uint8 image_left_seed_threshold;
 static uint8 image_right_seed_threshold;
 static bool image_seed_threshold_initialized;
-static Image_Track_Point image_target_point;
-static bool image_target_point_valid;
-static uint8 image_last_final_mid;
-static bool image_has_last_mid;
+static Image_Track_Point image_steering_target_point;
+static bool image_steering_target_point_valid;
+static int16 image_last_steering_command_x10;
+static bool image_has_last_steering_command;
 static bool image_new_result;
 static bool image_cycle_counter_ready;
 static Image_Process_Result image_process_result;
-static volatile uint8 image_published_mid;
-static volatile bool image_published_mid_valid;
+static volatile int16 image_published_steering_angle_x10;
+static volatile bool image_published_steering_valid;
 
 static uint8 image_limit_u8(int32 value, uint8 lower, uint8 upper)
 {
@@ -85,7 +90,7 @@ static uint8 image_limit_u8(int32 value, uint8 lower, uint8 upper)
 
 static void image_sanitize_config(void)
 {
-    uint8 maximum_lookahead_cm = (uint8)(
+    uint8 maximum_near_cm = (uint8)(
         (IMAGE_PERSPECTIVE_NEAR_X * IMAGE_PERSPECTIVE_GRID_MM) / 10U);
 
     if(image_process_config.min_border_points < 3U)
@@ -100,21 +105,21 @@ static void image_sanitize_config(void)
     {
         image_process_config.resample_step = 1U;
     }
-    if(image_process_config.lookahead_cm == 0U)
+    if(image_process_config.steering_near_cm == 0U)
     {
-        image_process_config.lookahead_cm = 1U;
+        image_process_config.steering_near_cm = 1U;
     }
-    if(image_process_config.lookahead_cm > maximum_lookahead_cm)
+    if(image_process_config.steering_near_cm > maximum_near_cm)
     {
-        image_process_config.lookahead_cm = maximum_lookahead_cm;
+        image_process_config.steering_near_cm = maximum_near_cm;
     }
-    if(image_process_config.target_gain_percent > 100U)
+    if(image_process_config.steering_gain_percent > 300U)
     {
-        image_process_config.target_gain_percent = 100U;
+        image_process_config.steering_gain_percent = 300U;
     }
-    if(image_process_config.target_filter_current > 100U)
+    if(image_process_config.steering_filter_current > 100U)
     {
-        image_process_config.target_filter_current = 100U;
+        image_process_config.steering_filter_current = 100U;
     }
 }
 
@@ -559,26 +564,135 @@ static Image_Track_Point image_bird_to_image(Image_Bird_Point point)
     return result;
 }
 
-static uint8 image_find_target_index(uint8 lookahead_cm)
+static uint16 image_bird_segment_length_mm(Image_Bird_Point first, Image_Bird_Point second)
 {
-    uint16 lookahead_mm = (uint16)lookahead_cm * 10U;
-    uint8 target_x = (lookahead_mm >= IMAGE_PERSPECTIVE_NEAR_X * IMAGE_PERSPECTIVE_GRID_MM)
-        ? 0U
-        : (uint8)(IMAGE_PERSPECTIVE_NEAR_X - lookahead_mm / IMAGE_PERSPECTIVE_GRID_MM);
+    int32 dx_mm = ((int32)second.x - (int32)first.x) * IMAGE_PERSPECTIVE_GRID_MM;
+    int32 dy_mm = ((int32)second.y - (int32)first.y) * IMAGE_PERSPECTIVE_GRID_MM;
+
+    return image_sqrt_u32((uint32)(dx_mm * dx_mm + dy_mm * dy_mm));
+}
+
+// HFK atan2_int 的定点查表版本；返回0.1度，并在线性插值后限制到正负30度。
+static int16 image_atan_ratio_x10(int32 numerator, int32 denominator)
+{
+    static const uint16 tangent_x65536[31] =
+    {
+        0U, 1143U, 2288U, 3434U, 4582U, 5732U,
+        6887U, 8046U, 9212U, 10383U, 11562U, 12749U,
+        13945U, 15151U, 16368U, 17597U, 18840U, 20097U,
+        21369U, 22657U, 23962U, 25286U, 26628U, 27989U,
+        29371U, 30775U, 32203U, 33654U, 35132U, 36637U,
+        37837U
+    };
+    int32 sign;
+    int32 absolute_numerator;
+    int32 scaled_numerator;
+    int32 degree;
+
+    if(numerator == 0 || denominator <= 0)
+    {
+        return 0;
+    }
+    sign = (numerator > 0) ? 1 : -1;
+    absolute_numerator = (numerator > 0) ? numerator : -numerator;
+    scaled_numerator = absolute_numerator * 65536;
+    if(scaled_numerator >= denominator * tangent_x65536[30])
+    {
+        return (int16)(sign * IMAGE_PURE_PURSUIT_MAX_ANGLE_X10);
+    }
+
+    for(degree = 29; degree >= 0; degree--)
+    {
+        int32 lower = denominator * tangent_x65536[degree];
+
+        if(scaled_numerator >= lower)
+        {
+            int32 upper = denominator * tangent_x65536[degree + 1];
+            int32 fraction_x10 = (scaled_numerator - lower) * 10
+                / (upper - lower);
+            return (int16)(sign * (degree * 10 + fraction_x10));
+        }
+    }
+    return 0;
+}
+
+static int16 image_calculate_pure_pursuit_angle_x10(Image_Bird_Point target)
+{
+    // 鸟瞰坐标以图像下方向为 x 增大、右方向为 y 增大。
+    // 标定距离以当前前轮轴为原点；HFK/自行车模型以后轮轴为原点，故前向距离加一轴距。
+    int32 forward_units = (int32)IMAGE_PERSPECTIVE_NEAR_X - (int32)target.x
+        + IMAGE_WHEELBASE_UNITS;
+    int32 lateral_units = (int32)IMAGE_PERSPECTIVE_CENTER_COL - (int32)target.y;
+    int32 numerator = 2 * IMAGE_WHEELBASE_UNITS * lateral_units;
+    int32 denominator = forward_units * forward_units + lateral_units * lateral_units;
+    int16 angle_x10 = image_atan_ratio_x10(numerator, denominator);
+
+    // HFK原函数以1度为分辨率，小于1度时输出0；保留该死区以抑制直道标定量化抖动。
+    return (angle_x10 > -IMAGE_PURE_PURSUIT_DEADBAND_X10
+        && angle_x10 < IMAGE_PURE_PURSUIT_DEADBAND_X10) ? 0 : angle_x10;
+}
+
+static int16 image_scale_and_limit_steering_x10(int16 angle_x10, uint16 gain_percent)
+{
+    int32 scaled = (int32)angle_x10 * gain_percent;
+
+    scaled = (scaled >= 0) ? (scaled + 50) / 100 : (scaled - 50) / 100;
+    if(scaled > IMAGE_STEERING_COMMAND_LIMIT_X10)
+    {
+        scaled = IMAGE_STEERING_COMMAND_LIMIT_X10;
+    }
+    if(scaled < -IMAGE_STEERING_COMMAND_LIMIT_X10)
+    {
+        scaled = -IMAGE_STEERING_COMMAND_LIMIT_X10;
+    }
+    return (int16)scaled;
+}
+
+static uint8 image_find_steering_target_index(
+    uint8 steering_near_cm,
+    uint16 *actual_distance_mm,
+    uint16 *centerline_length_mm)
+{
+    // 前瞻从前轮轴中心开始沿中心线累计弧长。弯中横向延伸也必须计入距离，
+    // 不能再用鸟瞰 x 坐标差代替路径长度。
+    const Image_Bird_Point vehicle_origin = {
+        IMAGE_PERSPECTIVE_NEAR_X,
+        IMAGE_PERSPECTIVE_CENTER_COL
+    };
+    uint16 requested_mm = (uint16)steering_near_cm * 10U;
+    uint16 accumulated_mm = image_bird_segment_length_mm(
+        vehicle_origin, image_centerline_bird[0]);
     uint8 best_index = 0U;
-    uint8 best_difference = 255U;
+    uint16 best_distance_mm = accumulated_mm;
+    uint16 best_difference_mm = (accumulated_mm >= requested_mm)
+        ? (accumulated_mm - requested_mm)
+        : (requested_mm - accumulated_mm);
     uint8 index;
 
-    for(index = 0U; index < image_centerline_count; index++)
+    for(index = 1U; index < image_centerline_count; index++)
     {
-        uint8 difference = (image_centerline_bird[index].x >= target_x)
-            ? (image_centerline_bird[index].x - target_x)
-            : (target_x - image_centerline_bird[index].x);
-        if(difference < best_difference)
+        uint16 difference_mm;
+
+        accumulated_mm += image_bird_segment_length_mm(
+            image_centerline_bird[index - 1U], image_centerline_bird[index]);
+        difference_mm = (accumulated_mm >= requested_mm)
+            ? (accumulated_mm - requested_mm)
+            : (requested_mm - accumulated_mm);
+        if(difference_mm < best_difference_mm)
         {
-            best_difference = difference;
+            best_difference_mm = difference_mm;
+            best_distance_mm = accumulated_mm;
             best_index = index;
         }
+    }
+
+    if(actual_distance_mm != NULL)
+    {
+        *actual_distance_mm = best_distance_mm;
+    }
+    if(centerline_length_mm != NULL)
+    {
+        *centerline_length_mm = accumulated_mm;
     }
     return best_index;
 }
@@ -590,13 +704,15 @@ static void image_clear_result(void)
     image_left_bird_count = 0U;
     image_right_bird_count = 0U;
     image_centerline_count = 0U;
-    image_target_point_valid = false;
+    image_steering_target_point_valid = false;
     image_process_result.source_frame_valid = false;
     image_process_result.centerline_valid = false;
-    image_process_result.target_reached = false;
+    image_process_result.pure_pursuit_angle_x10 = 0;
+    image_process_result.steering_command_x10 = 0;
+    image_process_result.steering_near_reached = false;
     image_process_result.confidence = 0U;
-    image_process_result.valid_distance_cm = 0U;
-    image_process_result.target_distance_cm = 0U;
+    image_process_result.centerline_length_cm = 0U;
+    image_process_result.steering_near_actual_cm = 0U;
     image_process_result.left_border_count = 0U;
     image_process_result.right_border_count = 0U;
     image_process_result.centerline_count = 0U;
@@ -631,9 +747,9 @@ void image_process_init(void)
     image_process_config.start_contrast_min = 15U;
     image_process_config.min_border_points = 12U;
     image_process_config.resample_step = 3U;
-    image_process_config.lookahead_cm = 75U;
-    image_process_config.target_gain_percent = 50U;
-    image_process_config.target_filter_current = 80U;
+    image_process_config.steering_near_cm = 55U;
+    image_process_config.steering_gain_percent = 150U;
+    image_process_config.steering_filter_current = 80U;
 
     memset(image_left_border, 0, sizeof(image_left_border));
     memset(image_right_border, 0, sizeof(image_right_border));
@@ -646,17 +762,16 @@ void image_process_init(void)
     image_left_seed_threshold = 128U;
     image_right_seed_threshold = 128U;
     image_seed_threshold_initialized = false;
-    image_last_final_mid = IMAGE_PERSPECTIVE_CENTER_COL;
-    image_has_last_mid = false;
-    image_published_mid = IMAGE_PERSPECTIVE_CENTER_COL;
-    image_published_mid_valid = false;
+    image_last_steering_command_x10 = 0;
+    image_has_last_steering_command = false;
+    image_published_steering_angle_x10 = 0;
+    image_published_steering_valid = false;
     image_new_result = false;
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0U;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
     image_cycle_counter_ready = ((DWT->CTRL & DWT_CTRL_NOCYCCNT_Msk) == 0U)
         && ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) != 0U);
-    image_process_result.final_mid = IMAGE_PERSPECTIVE_CENTER_COL;
     image_clear_result();
 }
 
@@ -672,11 +787,13 @@ void image_process_frame(void)
     bool right_valid;
     uint8 target_index;
     uint8 index;
-    uint8 raw_mid;
+    int16 pure_pursuit_angle_x10;
+    int16 raw_steering_command_x10;
+    int32 filtered_steering_x10;
     uint8 current_weight;
-    uint16 target_distance_difference_cm;
-    int32 target_offset;
-    uint8 minimum_x = IMAGE_PERSPECTIVE_NEAR_X;
+    uint16 steering_near_difference_cm;
+    uint16 steering_near_actual_mm;
+    uint16 centerline_length_mm;
     uint8 chosen_count = 0U;
     uint32 cycle_start = image_cycle_counter_ready ? DWT->CYCCNT : 0U;
 
@@ -687,8 +804,7 @@ void image_process_frame(void)
     latest_frame = image_acquire_latest_frame();
     if(latest_frame == NULL)
     {
-        image_process_result.final_mid = image_last_final_mid;
-        image_published_mid_valid = false;
+        image_published_steering_valid = false;
         image_finish_frame(cycle_start, false);
         return;
     }
@@ -747,10 +863,9 @@ void image_process_frame(void)
     }
     else
     {
-        image_process_result.final_mid = image_last_final_mid;
         image_process_result.left_border_count = image_left_border_count;
         image_process_result.right_border_count = image_right_border_count;
-        image_published_mid_valid = false;
+        image_published_steering_valid = false;
         image_finish_frame(cycle_start, true);
         return;
     }
@@ -760,10 +875,9 @@ void image_process_frame(void)
         image_centerline_bird, image_centerline_count, IMAGE_CENTER_RESAMPLE_STEP);
     if(image_centerline_count < image_process_config.min_border_points)
     {
-        image_process_result.final_mid = image_last_final_mid;
         image_process_result.left_border_count = image_left_border_count;
         image_process_result.right_border_count = image_right_border_count;
-        image_published_mid_valid = false;
+        image_published_steering_valid = false;
         image_finish_frame(cycle_start, true);
         return;
     }
@@ -771,60 +885,57 @@ void image_process_frame(void)
     for(index = 0U; index < image_centerline_count; index++)
     {
         image_centerline_image[index] = image_bird_to_image(image_centerline_bird[index]);
-        if(image_centerline_bird[index].x < minimum_x)
-        {
-            minimum_x = image_centerline_bird[index].x;
-        }
     }
-    image_process_result.valid_distance_cm =
-        (uint16)(((uint16)(IMAGE_PERSPECTIVE_NEAR_X - minimum_x) * IMAGE_PERSPECTIVE_GRID_MM) / 10U);
 
-    target_index = image_find_target_index(image_process_config.lookahead_cm);
-    image_target_point = image_centerline_image[target_index];
-    image_target_point_valid = true;
-    image_process_result.target_distance_cm = (uint16)(
-        ((uint16)(IMAGE_PERSPECTIVE_NEAR_X - image_centerline_bird[target_index].x)
-            * IMAGE_PERSPECTIVE_GRID_MM + 5U) / 10U);
-    target_distance_difference_cm =
-        (image_process_result.target_distance_cm >= image_process_config.lookahead_cm)
-        ? (image_process_result.target_distance_cm - image_process_config.lookahead_cm)
-        : (image_process_config.lookahead_cm - image_process_result.target_distance_cm);
-    image_process_result.target_reached =
-        target_distance_difference_cm <= IMAGE_TARGET_REACH_TOLERANCE_CM;
-    target_offset = (int32)image_target_point.col - (int32)IMAGE_PERSPECTIVE_CENTER_COL;
-    raw_mid = image_limit_u8(
-        (int32)IMAGE_PERSPECTIVE_CENTER_COL
-            + target_offset * (int32)image_process_config.target_gain_percent / 100,
-        0U,
-        MT9V03X_W - 1U);
-    current_weight = image_process_config.target_filter_current;
+    target_index = image_find_steering_target_index(
+        image_process_config.steering_near_cm,
+        &steering_near_actual_mm,
+        &centerline_length_mm);
+    image_steering_target_point = image_centerline_image[target_index];
+    image_steering_target_point_valid = true;
+    image_process_result.centerline_length_cm = (centerline_length_mm + 5U) / 10U;
+    image_process_result.steering_near_actual_cm = (steering_near_actual_mm + 5U) / 10U;
+    steering_near_difference_cm =
+        (image_process_result.steering_near_actual_cm >= image_process_config.steering_near_cm)
+        ? (image_process_result.steering_near_actual_cm - image_process_config.steering_near_cm)
+        : (image_process_config.steering_near_cm - image_process_result.steering_near_actual_cm);
+    image_process_result.steering_near_reached =
+        steering_near_difference_cm <= IMAGE_NEAR_REACH_TOLERANCE_CM;
+    pure_pursuit_angle_x10 = image_calculate_pure_pursuit_angle_x10(
+        image_centerline_bird[target_index]);
+    raw_steering_command_x10 = image_scale_and_limit_steering_x10(
+        pure_pursuit_angle_x10, image_process_config.steering_gain_percent);
+    image_process_result.pure_pursuit_angle_x10 = pure_pursuit_angle_x10;
+    current_weight = image_process_config.steering_filter_current;
     if(current_weight > 100U) current_weight = 100U;
-    if(!image_has_last_mid)
+    if(!image_has_last_steering_command)
     {
-        image_process_result.final_mid = raw_mid;
-        image_has_last_mid = true;
+        image_process_result.steering_command_x10 = raw_steering_command_x10;
+        image_has_last_steering_command = true;
     }
     else
     {
-        image_process_result.final_mid = (uint8)(
-            ((uint16)raw_mid * current_weight
-                + (uint16)image_last_final_mid * (100U - current_weight)
-                + 50U) / 100U);
+        filtered_steering_x10 = (int32)raw_steering_command_x10 * current_weight
+            + (int32)image_last_steering_command_x10 * (100U - current_weight);
+        filtered_steering_x10 = (filtered_steering_x10 >= 0)
+            ? (filtered_steering_x10 + 50) / 100
+            : (filtered_steering_x10 - 50) / 100;
+        image_process_result.steering_command_x10 = (int16)filtered_steering_x10;
     }
-    image_last_final_mid = image_process_result.final_mid;
-    image_published_mid = image_process_result.final_mid;
-    image_published_mid_valid = true;
+    image_last_steering_command_x10 = image_process_result.steering_command_x10;
+    image_published_steering_angle_x10 = image_process_result.steering_command_x10;
+    image_published_steering_valid = true;
     image_process_result.centerline_valid = true;
     image_process_result.left_border_count = image_left_border_count;
     image_process_result.right_border_count = image_right_border_count;
     image_process_result.centerline_count = image_centerline_count;
     image_process_result.confidence = image_limit_u8((uint32)chosen_count * 100U / 45U, 0U, 100U);
-    if(image_process_result.valid_distance_cm < image_process_config.lookahead_cm)
+    if(image_process_result.centerline_length_cm < image_process_config.steering_near_cm)
     {
         image_process_result.confidence = (uint8)(
             (uint16)image_process_result.confidence
-            * image_process_result.valid_distance_cm
-            / image_process_config.lookahead_cm);
+            * image_process_result.centerline_length_cm
+            / image_process_config.steering_near_cm);
     }
 
     image_finish_frame(cycle_start, true);
@@ -864,10 +975,10 @@ void image_process_display(void)
             (uint16)image_centerline_image[index].row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H,
             RGB565_GREEN);
     }
-    if(image_target_point_valid)
+    if(image_steering_target_point_valid)
     {
-        uint16 x = (uint16)image_target_point.col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W;
-        uint16 y = (uint16)image_target_point.row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H;
+        uint16 x = (uint16)image_steering_target_point.col * IMAGE_PROCESS_DISPLAY_WIDTH / MT9V03X_W;
+        uint16 y = (uint16)image_steering_target_point.row * IMAGE_PROCESS_DISPLAY_HEIGHT / MT9V03X_H;
         uint16 x_end = (x + 3U < IMAGE_PROCESS_DISPLAY_WIDTH)
             ? (x + 3U) : (IMAGE_PROCESS_DISPLAY_WIDTH - 1U);
         uint16 y_end = (y + 3U < IMAGE_PROCESS_DISPLAY_HEIGHT)
@@ -878,10 +989,12 @@ void image_process_display(void)
     }
 
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
-    ips200_show_string(0U, 160U, "MID:");
-    ips200_show_uint(40U, 160U, image_process_result.final_mid, 3U);
-    ips200_show_string(88U, 160U, "VALID:");
-    ips200_show_string(144U, 160U, image_process_result.centerline_valid ? "YES" : "NO ");
+    ips200_show_string(0U, 160U, "PP:");
+    ips200_show_int(24U, 160U, image_process_result.pure_pursuit_angle_x10, 4U);
+    ips200_show_string(72U, 160U, "CMD:");
+    ips200_show_int(104U, 160U, image_process_result.steering_command_x10, 4U);
+    ips200_show_string(160U, 160U, "V:");
+    ips200_show_string(176U, 160U, image_process_result.centerline_valid ? "YES" : "NO ");
     ips200_set_color(RGB565_WHITE, RGB565_BLACK);
     ips200_show_string(0U, 176U, "L:");
     ips200_show_uint(16U, 176U, image_left_border_count, 3U);
@@ -889,15 +1002,17 @@ void image_process_display(void)
     ips200_show_uint(64U, 176U, image_right_border_count, 3U);
     ips200_show_string(96U, 176U, "C:");
     ips200_show_uint(112U, 176U, image_centerline_count, 3U);
-    ips200_show_string(0U, 192U, "DIST:");
-    ips200_show_uint(48U, 192U, image_process_result.valid_distance_cm, 3U);
+    ips200_show_string(0U, 192U, "PATH:");
+    ips200_show_uint(48U, 192U, image_process_result.centerline_length_cm, 3U);
     ips200_show_string(80U, 192U, "cm CONF:");
     ips200_show_uint(152U, 192U, image_process_result.confidence, 3U);
-    ips200_show_string(0U, 208U, "TGT:");
-    ips200_show_uint(32U, 208U, image_process_result.target_distance_cm, 3U);
-    ips200_show_string(64U, 208U, "cm REACH:");
-    ips200_show_string(144U, 208U, image_process_result.target_reached ? "YES" : "NO ");
-    ips200_show_string(0U, 224U, "Y:TARGET KEY4:BACK");
+    ips200_show_string(0U, 208U, "NEAR:");
+    ips200_show_uint(48U, 208U, image_process_result.steering_near_actual_cm, 3U);
+    ips200_show_string(80U, 208U, "cm HIT:");
+    ips200_show_string(144U, 208U, image_process_result.steering_near_reached ? "YES" : "NO ");
+    ips200_show_string(0U, 224U, "SET:");
+    ips200_show_uint(32U, 224U, image_process_config.steering_near_cm, 3U);
+    ips200_show_string(64U, 224U, "cm Y:NEAR K4:BACK");
     ips200_show_string(0U, 240U, "TIME:");
     ips200_show_uint(48U, 240U, image_process_result.process_time_us, 4U);
     ips200_show_string(88U, 240U, "us");
@@ -918,13 +1033,13 @@ const Image_Process_Result *image_process_get_result(void)
     return &image_process_result;
 }
 
-bool image_process_get_steering_mid(uint8 *mid)
+bool image_process_get_steering_angle_x10(int16 *angle_x10)
 {
-    if(mid == NULL || !image_published_mid_valid)
+    if(angle_x10 == NULL || !image_published_steering_valid)
     {
         return false;
     }
-    *mid = image_published_mid;
+    *angle_x10 = image_published_steering_angle_x10;
     return true;
 }
 
@@ -959,15 +1074,15 @@ const Image_Bird_Point *image_process_get_centerline_bird(uint8 *count)
     return image_centerline_bird;
 }
 
-bool image_process_get_target_point(Image_Track_Point *point)
+bool image_process_get_steering_target_point(Image_Track_Point *point)
 {
-    if(!image_target_point_valid)
+    if(!image_steering_target_point_valid)
     {
         return false;
     }
     if(point != NULL)
     {
-        *point = image_target_point;
+        *point = image_steering_target_point;
     }
     return true;
 }

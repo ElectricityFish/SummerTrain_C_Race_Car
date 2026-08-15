@@ -26,7 +26,7 @@ typedef struct {
 // Generic PID update function.
 void PID_Update(PID_t *p);
 
-// 舵机视觉控制专用 PID。KpNow 由误差大小动态计算，单位为“舵机角度/图像像素”。
+// 舵机视觉控制专用 PID。纯追踪目标和 Actual 均使用角度（度），Out 为舵机逻辑角度。
 // Kd 对图像误差作差分，Kd2 对陀螺仪横摆角速度作阻尼反馈。
 typedef struct {
 	float Target;

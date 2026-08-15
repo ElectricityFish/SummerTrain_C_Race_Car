@@ -31,20 +31,21 @@ typedef struct
     uint8 start_contrast_min;      // Minimum gray difference across a seed edge.
     uint8 min_border_points;       // Minimum connected points for a valid border.
     uint8 resample_step;           // Bird-view equal-distance sample step.
-    uint8 lookahead_cm;            // Physical steering lookahead from the front axle.
-    uint8 target_gain_percent;     // Bird target to legacy pixel-error scale, 0..100.
-    uint8 target_filter_current;   // Current-frame share in final_mid, 0..100.
+    uint8 steering_near_cm;        // Steering near-lookahead measured along the centerline.
+    uint16 steering_gain_percent;  // Pure-pursuit angle to servo-command scale.
+    uint8 steering_filter_current; // Current-frame share in steering command, 0..100.
 } Image_Process_Config;
 
 typedef struct
 {
-    uint8 final_mid;
+    int16 pure_pursuit_angle_x10;
+    int16 steering_command_x10;
     bool source_frame_valid;
     bool centerline_valid;
-    bool target_reached;
+    bool steering_near_reached;
     uint8 confidence;
-    uint16 valid_distance_cm;
-    uint16 target_distance_cm;
+    uint16 centerline_length_cm;
+    uint16 steering_near_actual_cm;
     uint8 left_border_count;
     uint8 right_border_count;
     uint8 centerline_count;
@@ -60,13 +61,13 @@ void image_process_display(void);
 bool image_process_take_new_result(void);
 
 const Image_Process_Result *image_process_get_result(void);
-bool image_process_get_steering_mid(uint8 *mid);
+bool image_process_get_steering_angle_x10(int16 *angle_x10);
 const uint8 *image_process_get_source_frame(void);
 
 const Image_Track_Point *image_process_get_left_border(uint8 *count);
 const Image_Track_Point *image_process_get_right_border(uint8 *count);
 const Image_Track_Point *image_process_get_centerline_image(uint8 *count);
 const Image_Bird_Point *image_process_get_centerline_bird(uint8 *count);
-bool image_process_get_target_point(Image_Track_Point *point);
+bool image_process_get_steering_target_point(Image_Track_Point *point);
 
 #endif

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +15,10 @@ import generate_image_perspective as calibration
 
 
 MAX_POINTS = 100
+WHEELBASE_MM = 200
+PURE_PURSUIT_MAX_ANGLE_X10 = 300
+PURE_PURSUIT_DEADBAND_X10 = 10
+STEERING_COMMAND_LIMIT_X10 = 250
 DIR_FORWARD = ((-2, 0), (0, 2), (2, 0), (0, -2))
 DIR_LEFT = ((-2, -2), (-2, 2), (2, 2), (2, -2))
 DIR_RIGHT = ((-2, 2), (2, 2), (2, -2), (-2, -2))
@@ -25,6 +30,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distance-dir", type=Path, required=True)
     parser.add_argument("--width-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--steering-near-cm", type=int, default=55)
+    parser.add_argument("--steering-gain-percent", type=int, default=150)
     return parser.parse_args()
 
 
@@ -229,7 +236,56 @@ def bird_to_image(point, center, width, inverse_row):
     return row, int(np.clip(round(col), 0, 187))
 
 
-def process(path: Path, bbox, center, width, lut, inverse_row):
+def atan_ratio_x10(numerator: int, denominator: int) -> int:
+    tangent_x65536 = (
+        0, 1143, 2288, 3434, 4582, 5732,
+        6887, 8046, 9212, 10383, 11562, 12749,
+        13945, 15151, 16368, 17597, 18840, 20097,
+        21369, 22657, 23962, 25286, 26628, 27989,
+        29371, 30775, 32203, 33654, 35132, 36637, 37837,
+    )
+    if numerator == 0 or denominator <= 0:
+        return 0
+    sign = 1 if numerator > 0 else -1
+    scaled_numerator = abs(numerator) * 65536
+    if scaled_numerator >= denominator * tangent_x65536[30]:
+        return sign * PURE_PURSUIT_MAX_ANGLE_X10
+    for degree in range(29, -1, -1):
+        lower = denominator * tangent_x65536[degree]
+        if scaled_numerator >= lower:
+            upper = denominator * tangent_x65536[degree + 1]
+            fraction_x10 = (scaled_numerator - lower) * 10 // (upper - lower)
+            return sign * (degree * 10 + fraction_x10)
+    return 0
+
+
+def pure_pursuit_angle_x10(target_bird) -> int:
+    wheelbase_units = (WHEELBASE_MM + calibration.BIRD_GRID_MM // 2) // calibration.BIRD_GRID_MM
+    forward_units = calibration.BIRD_NEAR_X - target_bird[0] + wheelbase_units
+    lateral_units = calibration.BIRD_CENTER_COL - target_bird[1]
+    angle_x10 = atan_ratio_x10(
+        2 * wheelbase_units * lateral_units,
+        forward_units * forward_units + lateral_units * lateral_units,
+    )
+    return 0 if -PURE_PURSUIT_DEADBAND_X10 < angle_x10 < PURE_PURSUIT_DEADBAND_X10 else angle_x10
+
+
+def steering_command_x10(angle_x10: int, gain_percent: int) -> int:
+    scaled = angle_x10 * gain_percent
+    scaled = math.trunc((scaled + 50 if scaled >= 0 else scaled - 50) / 100)
+    return max(-STEERING_COMMAND_LIMIT_X10, min(STEERING_COMMAND_LIMIT_X10, scaled))
+
+
+def process(
+    path,
+    bbox,
+    center,
+    width,
+    lut,
+    inverse_row,
+    steering_near_cm,
+    steering_gain_percent,
+):
     image = raw_camera(path, bbox)
     left_threshold, right_threshold = seed_thresholds(image)
     left = trace(image, find_seed(image, left_threshold, True), True)
@@ -252,19 +308,48 @@ def process(path: Path, bbox, center, width, lut, inverse_row):
     center_bird = resample(filter_line(center_bird), 2) if center_bird else []
     center_image = [bird_to_image(point, center, width, inverse_row) for point in center_bird]
     target = None
-    target_distance_cm = None
-    target_reached = False
+    target_bird = None
+    centerline_length_cm = None
+    steering_near_actual_cm = None
+    steering_near_reached = False
+    pursuit_angle_x10 = None
+    command_x10 = None
     if center_bird:
-        target_x = calibration.BIRD_NEAR_X - 750 // calibration.BIRD_GRID_MM
-        target_index = min(range(len(center_bird)), key=lambda i: abs(center_bird[i][0] - target_x))
-        target = center_image[target_index]
-        target_distance_cm = round(
-            (calibration.BIRD_NEAR_X - center_bird[target_index][0])
-            * calibration.BIRD_GRID_MM
-            / 10
+        previous = (calibration.BIRD_NEAR_X, calibration.BIRD_CENTER_COL)
+        accumulated_mm = 0
+        path_distances_mm = []
+        for point in center_bird:
+            dx_mm = (point[0] - previous[0]) * calibration.BIRD_GRID_MM
+            dy_mm = (point[1] - previous[1]) * calibration.BIRD_GRID_MM
+            accumulated_mm += math.isqrt(dx_mm * dx_mm + dy_mm * dy_mm)
+            path_distances_mm.append(accumulated_mm)
+            previous = point
+        requested_mm = steering_near_cm * 10
+        target_index = min(
+            range(len(center_bird)),
+            key=lambda i: abs(path_distances_mm[i] - requested_mm),
         )
-        target_reached = abs(target_distance_cm - 75) <= 4
-    return image, left, right, center_image, target, target_distance_cm, target_reached, side
+        target = center_image[target_index]
+        target_bird = center_bird[target_index]
+        centerline_length_cm = (path_distances_mm[-1] + 5) // 10
+        steering_near_actual_cm = (path_distances_mm[target_index] + 5) // 10
+        steering_near_reached = abs(steering_near_actual_cm - steering_near_cm) <= 4
+        pursuit_angle_x10 = pure_pursuit_angle_x10(target_bird)
+        command_x10 = steering_command_x10(pursuit_angle_x10, steering_gain_percent)
+    return (
+        image,
+        left,
+        right,
+        center_image,
+        target,
+        target_bird,
+        centerline_length_cm,
+        steering_near_actual_cm,
+        steering_near_reached,
+        pursuit_angle_x10,
+        command_x10,
+        side,
+    )
 
 
 def save_overlay(output: Path, image, left, right, center, target):
@@ -299,10 +384,23 @@ def main():
             right,
             centerline,
             target,
-            target_distance_cm,
-            target_reached,
+            target_bird,
+            centerline_length_cm,
+            steering_near_actual_cm,
+            steering_near_reached,
+            pursuit_angle_x10,
+            command_x10,
             side,
-        ) = process(path, bbox, center, width, lut, inverse_row)
+        ) = process(
+            path,
+            bbox,
+            center,
+            width,
+            lut,
+            inverse_row,
+            args.steering_near_cm,
+            args.steering_gain_percent,
+        )
         relative = path.relative_to(args.image_root)
         save_overlay(args.output_dir / relative, image, left, right, centerline, target)
         report.append(
@@ -314,14 +412,15 @@ def main():
                 "selected_side": side,
                 "target_row": target[0] if target else None,
                 "target_col": target[1] if target else None,
-                "target_distance_cm": target_distance_cm,
-                "target_reached": target_reached,
-                "final_mid_50pct": (
-                    calibration.BIRD_CENTER_COL
-                    + round((target[1] - calibration.BIRD_CENTER_COL) * 0.5)
-                    if target
-                    else None
-                ),
+                "target_bird_x": target_bird[0] if target_bird else None,
+                "target_bird_y": target_bird[1] if target_bird else None,
+                "centerline_length_cm": centerline_length_cm,
+                "steering_near_set_cm": args.steering_near_cm,
+                "steering_near_actual_cm": steering_near_actual_cm,
+                "steering_near_reached": steering_near_reached,
+                "pure_pursuit_angle_x10": pursuit_angle_x10,
+                "steering_gain_percent": args.steering_gain_percent,
+                "steering_command_x10": command_x10,
             }
         )
     args.output_dir.mkdir(parents=True, exist_ok=True)
