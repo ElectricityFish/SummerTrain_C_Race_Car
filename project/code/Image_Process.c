@@ -31,6 +31,12 @@
 #define IMAGE_CURVE_SINGLE_EDGE_ROWS_MIN      (18U)
 #define IMAGE_CURVE_INNER_BIAS_MAX            (10U)
 
+// 双边线阶段使用约60 cm远前瞻提前入弯；单边线弯道使用约40 cm近前瞻保持稳定。
+// 单边线消失后连续3帧才恢复远前瞻，避免边线有效性在临界位置抖动。
+#define IMAGE_LOOKAHEAD_FAR_ROW_DEFAULT        (47U)
+#define IMAGE_LOOKAHEAD_NEAR_ROW_DEFAULT       (68U)
+#define IMAGE_LOOKAHEAD_FAR_RECOVERY_FRAMES     (3U)
+
 // 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
 #define IMAGE_CROSS_ROI_TOP                 (12U)
 #define IMAGE_CROSS_ROI_BOTTOM              (75U)
@@ -89,6 +95,9 @@ static uint8 image_cross_right_row;
 static bool image_cross_corners_valid;
 static uint8 image_cross_confirm_count;
 static uint8 image_cross_missed_count;
+static bool image_near_lookahead_active;
+static uint8 image_far_lookahead_recovery_count;
+static uint8 image_lookahead_center_row;
 
 // 独立逐行扫描的临时结果，避免十字检测受底部向上跟踪路径的影响。
 static uint16 image_cross_scan_left[MT9V03X_H];
@@ -133,9 +142,9 @@ static uint8 image_process_contrast(uint8 inside, uint8 outside)
     return (uint8)(((int32)difference * 200) / sum);
 }
 
-static uint8 image_process_row_weight(uint8 row)
+static uint8 image_process_row_weight(uint8 row, uint8 center_row)
 {
-    uint8 center = image_process_limit_u8(image_process_config.weight_center_row, 0U, MT9V03X_H - 1U);
+    uint8 center = image_process_limit_u8(center_row, 0U, MT9V03X_H - 1U);
     uint8 span = image_process_limit_u8(image_process_config.weight_span, 1U, MT9V03X_H - 1U);
     uint8 peak = image_process_limit_u8(image_process_config.weight_peak, IMAGE_PROCESS_WEIGHT_BASE, 100U);
     uint8 distance = image_process_abs_diff(row, center);
@@ -1013,6 +1022,47 @@ static int8 image_process_get_curve_inner_direction(void)
     return 0;
 }
 
+static uint8 image_process_get_lookahead_center_row(int8 curve_inner_direction)
+{
+    uint8 far_row = image_process_limit_u8(
+        image_process_config.weight_far_center_row,
+        0U,
+        MT9V03X_H - 1U);
+    uint8 near_row = image_process_limit_u8(
+        image_process_config.weight_near_center_row,
+        0U,
+        MT9V03X_H - 1U);
+
+    // 特殊元素沿用原来的约40 cm前瞻，不改变其现有控制路径。
+    if(image_cross_state != IMAGE_CROSS_STATE_NONE || image_zebra_detected)
+    {
+        image_near_lookahead_active = true;
+        image_far_lookahead_recovery_count = 0U;
+        return near_row;
+    }
+
+    if(curve_inner_direction != 0)
+    {
+        // 单边线在当前帧成立后立即收近前瞻。
+        image_near_lookahead_active = true;
+        image_far_lookahead_recovery_count = 0U;
+    }
+    else if(image_near_lookahead_active)
+    {
+        if(image_far_lookahead_recovery_count < IMAGE_LOOKAHEAD_FAR_RECOVERY_FRAMES)
+        {
+            image_far_lookahead_recovery_count++;
+        }
+        if(image_far_lookahead_recovery_count >= IMAGE_LOOKAHEAD_FAR_RECOVERY_FRAMES)
+        {
+            image_near_lookahead_active = false;
+            image_far_lookahead_recovery_count = 0U;
+        }
+    }
+
+    return image_near_lookahead_active ? near_row : far_row;
+}
+
 static void image_process_calculate_mid(void)
 {
     uint32 weighted_sum = 0U;
@@ -1026,9 +1076,12 @@ static void image_process_calculate_mid(void)
     int8 curve_inner_direction;
     uint8 current_mid;
 
+    curve_inner_direction = image_process_get_curve_inner_direction();
+    image_lookahead_center_row = image_process_get_lookahead_center_row(curve_inner_direction);
+
     for(row = 0U; row < MT9V03X_H; row++)
     {
-        uint8 weight = image_process_row_weight((uint8)row);
+        uint8 weight = image_process_row_weight((uint8)row, image_lookahead_center_row);
 
         image_mid_line[row] = (uint8)((image_left_edge[row] + image_right_edge[row]) / 2U);
         weighted_sum += (uint32)image_mid_line[row] * weight;
@@ -1036,7 +1089,6 @@ static void image_process_calculate_mid(void)
     }
 
     current_mid = (uint8)(weighted_sum / weight_sum);
-    curve_inner_direction = image_process_get_curve_inner_direction();
     current_mid = image_process_limit_u8(
         (int32)current_mid + (int32)curve_inner_direction * curve_inner_bias,
         0U,
@@ -1064,7 +1116,8 @@ void image_process_init(void)
     image_process_config.contrast_threshold = 20U;
     image_process_config.contrast_offset = 3U;
     image_process_config.search_range = 10U;
-    image_process_config.weight_center_row = 68U;
+    image_process_config.weight_far_center_row = IMAGE_LOOKAHEAD_FAR_ROW_DEFAULT;
+    image_process_config.weight_near_center_row = IMAGE_LOOKAHEAD_NEAR_ROW_DEFAULT;
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
@@ -1099,6 +1152,9 @@ void image_process_init(void)
     image_cross_confirm_count = 0U;
     image_cross_missed_count = 0U;
     image_cross_scan_seed_col = MT9V03X_W / 2U;
+    image_near_lookahead_active = false;
+    image_far_lookahead_recovery_count = 0U;
+    image_lookahead_center_row = image_process_config.weight_far_center_row;
 }
 
 void image_process_frame(bool out_of_bounds_monitor_enabled)
@@ -1163,6 +1219,8 @@ void image_process_display(void)
     ips200_show_uint(40U, 160U, image_final_mid, 3U);
     ips200_show_string(88U, 160U, "REF:");
     ips200_show_uint(128U, 160U, image_reference_col, 3U);
+    ips200_show_string(160U, 160U, "LOOK:");
+    ips200_show_uint(200U, 160U, image_lookahead_center_row, 3U);
     ips200_set_color(RGB565_WHITE, RGB565_BLACK);
     ips200_show_string(0U, 176U, "R:RED B:BLUE G:MID");
     ips200_show_string(0U, 192U, "Y:REF  KEY4:BACK");

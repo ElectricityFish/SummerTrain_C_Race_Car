@@ -450,7 +450,8 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "Contrast", &image_process_config.contrast_threshold, uint8_Box, 1.0f, 100.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Offset", &image_process_config.contrast_offset, uint8_Box, 1.0f, 8.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Range", &image_process_config.search_range, uint8_Box, 1.0f, 60.0f, 1.0f);
-		create_menu_number_range_dynamic(process_folder, "WeightRow", &image_process_config.weight_center_row, uint8_Box, 0.0f, 119.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "FarRow", &image_process_config.weight_far_center_row, uint8_Box, 0.0f, 119.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "NearRow", &image_process_config.weight_near_center_row, uint8_Box, 0.0f, 119.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);

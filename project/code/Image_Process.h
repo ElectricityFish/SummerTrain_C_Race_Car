@@ -14,7 +14,8 @@ typedef struct
     uint8 contrast_threshold;      // 黑白边沿的归一化对比度门限
     uint8 contrast_offset;         // 对比像素间隔，单位：像素
     uint8 search_range;            // 相邻两行边线搜索范围，单位：像素
-    uint8 weight_center_row;       // 加权中线最关注的图像行
+    uint8 weight_far_center_row;   // 双边线时的远前瞻中心行
+    uint8 weight_near_center_row;  // 单边线弯道时的近前瞻中心行
     uint8 weight_span;             // 加权区域半宽，单位：行
     uint8 weight_peak;             // 加权区域中心的最大权重
     uint8 mid_filter_current;      // 最终中线中当前帧占比，范围 0~100
