@@ -63,9 +63,9 @@ void speed_decision_init(void)
 {
 	steering_differential_enabled = 1U;
 	steering_differential_deadband = 3.0f;
-	steering_differential_gain = 0.24f;
-	steering_differential_max_ratio = 0.6f;
-	steering_differential_outer_scale = 0.2f;
+	steering_differential_gain = 0.18f;
+	steering_differential_max_ratio = 0.45f;
+	steering_differential_outer_scale = 0.05f;
 	speed_decision_stop();
 }
 
