@@ -40,8 +40,9 @@ extern bool image_right_edge_valid[MT9V03X_H];
 // 初始化图像处理状态和默认参数。
 void image_process_init(void);
 
-// 处理 image_get_buffer() 指向的一帧灰度图。应在 image_take_new_frame() 返回 true 后调用。
-void image_process_frame(void);
+// 处理 image_get_buffer() 指向的一帧灰度图。仅在保护使能时累计出界异常帧。
+// 应在 image_take_new_frame() 返回 true 后调用。
+void image_process_frame(bool out_of_bounds_monitor_enabled);
 
 // 在 IPS200 上显示灰度图，并叠加参考列、左右边线和中线。
 void image_process_display(void);
@@ -55,9 +56,12 @@ uint8 image_process_get_reference_gray(void);
 uint8 image_process_get_white_min(void);
 uint8 image_process_get_white_max(void);
 
-// 返回最底行白色占比，以及该行白色占比是否低于出界门限。
+// 返回底部5条采样行中的最大白色占比，以及多行出界判定结果。
 uint8 image_process_get_bottom_white_ratio(void);
 bool image_process_is_out_of_bounds(void);
+
+// 清除出界连续帧计数和判定结果；每次进入 RUNNING/PLAY 时调用。
+void image_process_reset_out_of_bounds(void);
 
 // 斑马线由底部多行规则黑白条纹确认，并在图像层优先于出界判定。
 bool image_process_is_zebra_detected(void);

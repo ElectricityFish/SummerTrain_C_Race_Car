@@ -5,9 +5,11 @@
 #define IMAGE_PROCESS_DISPLAY_WIDTH   (240U)
 #define IMAGE_PROCESS_DISPLAY_HEIGHT  (153U)
 
-// 出界检测只统计图像最底行。动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
+// 出界检测逐行统计图像底部5行；只有5行白色占比都不足才累计异常帧。
+// 动态白色门限在出界时会随暗背景下降，因此保留绝对灰度下限。
 #define IMAGE_OUT_BOUND_WHITE_GRAY_MIN       (100U)
-#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (5U)
+#define IMAGE_OUT_BOUND_SAMPLE_ROWS           (5U)
+#define IMAGE_OUT_BOUND_WHITE_RATIO_MIN      (15U)
 #define IMAGE_OUT_BOUND_CONFIRM_FRAMES        (5U)
 
 // 斑马线使用底部三条横向采样线识别重复黑白条纹，并优先于出界判定。
@@ -322,30 +324,54 @@ static void image_process_detect_zebra(const uint8 image[][MT9V03X_W])
     }
 }
 
-// 最底行连续三帧白色不足才确认离开赛道，过滤弯道、模糊等造成的单帧异常。
-// 比例只用于显示，判定使用交叉相乘避免除法误差。
-static void image_process_detect_out_of_bounds(const uint8 image[][MT9V03X_W])
+// 底部5行全部白色不足并连续多帧出现时才确认离开赛道。
+// 显示值取5行中的最大白色占比，判定使用交叉相乘避免除法误差。
+static void image_process_detect_out_of_bounds(
+    const uint8 image[][MT9V03X_W],
+    bool monitor_enabled)
 {
     uint8 white_threshold = image_process_get_feature_white_threshold();
-    uint16 white_count = 0U;
+    uint8 maximum_white_ratio = 0U;
+    bool all_rows_below_threshold = true;
+    uint8 sample;
     uint16 col;
 
-    for(col = 0U; col < MT9V03X_W; col++)
+    for(sample = 0U; sample < IMAGE_OUT_BOUND_SAMPLE_ROWS; sample++)
     {
-        if(image[MT9V03X_H - 1U][col] >= white_threshold)
+        uint8 row = MT9V03X_H - 1U - sample;
+        uint16 white_count = 0U;
+        uint8 white_ratio;
+
+        for(col = 0U; col < MT9V03X_W; col++)
         {
-            white_count++;
+            if(image[row][col] >= white_threshold)
+            {
+                white_count++;
+            }
+        }
+
+        white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
+        if(white_ratio > maximum_white_ratio)
+        {
+            maximum_white_ratio = white_ratio;
+        }
+        if((uint32)white_count * 100U
+            >= (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN)
+        {
+            all_rows_below_threshold = false;
         }
     }
 
-    image_bottom_white_ratio = (uint8)(((uint32)white_count * 100U) / MT9V03X_W);
-    if(image_zebra_detected
-        || ((uint32)white_count * 100U
-            >= (uint32)MT9V03X_W * IMAGE_OUT_BOUND_WHITE_RATIO_MIN))
+    image_bottom_white_ratio = maximum_white_ratio;
+    if(!monitor_enabled)
     {
-        // 斑马线优先级最高；任意一帧恢复正常也会打断连续出界计数。
-        image_out_of_bounds_confirm_count = 0U;
-        image_out_of_bounds = false;
+        image_process_reset_out_of_bounds();
+        return;
+    }
+    if(image_zebra_detected || !all_rows_below_threshold)
+    {
+        // 斑马线优先级最高；任意一行恢复正常也会打断连续出界计数。
+        image_process_reset_out_of_bounds();
         return;
     }
 
@@ -1018,13 +1044,13 @@ void image_process_init(void)
     image_cross_scan_seed_col = MT9V03X_W / 2U;
 }
 
-void image_process_frame(void)
+void image_process_frame(bool out_of_bounds_monitor_enabled)
 {
     const uint8 (*image)[MT9V03X_W] = (const uint8 (*)[MT9V03X_W])image_get_buffer();
 
     image_process_calculate_threshold(image);
     image_process_detect_zebra(image);
-    image_process_detect_out_of_bounds(image);
+    image_process_detect_out_of_bounds(image, out_of_bounds_monitor_enabled);
     image_process_find_reference_col(image);
     image_process_track_edges(image);
     image_process_detect_cross(image);
@@ -1150,6 +1176,12 @@ uint8 image_process_get_bottom_white_ratio(void)
 bool image_process_is_out_of_bounds(void)
 {
     return image_out_of_bounds;
+}
+
+void image_process_reset_out_of_bounds(void)
+{
+    image_out_of_bounds = false;
+    image_out_of_bounds_confirm_count = 0U;
 }
 
 bool image_process_is_zebra_detected(void)

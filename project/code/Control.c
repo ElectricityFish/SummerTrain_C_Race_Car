@@ -1,7 +1,6 @@
 #include "zf_common_headfile.h"
 #include "Control.h"
 #include "Image_Process.h"
-#include "Kfilter.h"
 #include "MPU6050.h"
 #include "Motor.h"
 #include "SpeedControl.h"
@@ -13,12 +12,12 @@
 volatile Common_State common_state;
 volatile uint8 car_go_command;
 volatile uint8 car_protection_reason;
+volatile uint8 car_stop_reason;
 volatile uint8 wireless_control_enabled;
 
 Servo_PID_t servo_pid;
 volatile bool servo_control_enabled;
 
-static uint8 car_protection_active_reason;
 static uint8 wireless_control_enabled_last;
 static volatile uint8 car_zebra_pass_count;
 static volatile bool car_zebra_straight_active;
@@ -38,11 +37,6 @@ static bool car_race_finished_latched;
 #define WIRELESS_STEER_RIGHT_START          (1515U)
 #define WIRELESS_STEER_CHANNEL_MAX          (2000U)
 #define CAR_ZEBRA_REARM_ABSENT_FRAMES       (3U)
-
-static float control_absf(float value)
-{
-    return (value >= 0.0f) ? value : -value;
-}
 
 static void car_state_stop_actuators(void)
 {
@@ -80,12 +74,39 @@ bool wireless_control_actuators_permitted(void)
 
 static void car_state_apply(Common_State next_state)
 {
+    Common_State previous_state = common_state;
+    bool previous_state_is_running;
+    bool next_state_is_running;
+
     if(common_state == next_state)
     {
         return;
     }
 
+    previous_state_is_running = (previous_state == COMMON_STATE_RUNNING)
+        || (previous_state == COMMON_STATE_PLAY);
+    next_state_is_running = (next_state == COMMON_STATE_RUNNING)
+        || (next_state == COMMON_STATE_PLAY);
+
+    if(next_state_is_running && !previous_state_is_running)
+    {
+        // 每次真正从停车状态发车，清除上一轮所有停车原因。
+        car_stop_reason = CAR_STOP_REASON_NONE;
+    }
+    else if(previous_state_is_running
+        && (next_state == COMMON_STATE_IDLE)
+        && (car_stop_reason == CAR_STOP_REASON_NONE))
+    {
+        // 没有斑马线、失联或保护原因时，运行态进入 IDLE 就是人工/遥控器正常停车。
+        car_stop_reason = CAR_STOP_REASON_OK;
+    }
+
     common_state = next_state;
+    if((next_state == COMMON_STATE_RUNNING) || (next_state == COMMON_STATE_PLAY))
+    {
+        // 新一次运行不继承 IDLE/PROTECT 阶段的出界连续帧状态。
+        image_process_reset_out_of_bounds();
+    }
     if(next_state == COMMON_STATE_RUNNING)
     {
 		// 每次从 IDLE 重新发车都开始一场新比赛，并重新统计起点/终点斑马线。
@@ -122,8 +143,7 @@ static void car_state_process_base_command(void)
         {
             car_state_apply(COMMON_STATE_IDLE);
         }
-        else if((common_state == COMMON_STATE_PROTECT)
-            && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE))
+        else if(common_state == COMMON_STATE_PROTECT)
         {
             // Protect 退出必须由人工把 RunCmd 置 0 确认；不会自动恢复运行。
             car_protection_reason = CAR_PROTECTION_REASON_NONE;
@@ -131,7 +151,6 @@ static void car_state_process_base_command(void)
         }
     }
     else if((common_state == COMMON_STATE_IDLE)
-        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE)
         && !car_race_finished_latched)
     {
         car_state_apply(COMMON_STATE_RUNNING);
@@ -202,6 +221,11 @@ static void wireless_control_process_state(void)
 
     if(!wireless_control_actuators_permitted())
     {
+        if((common_state == COMMON_STATE_RUNNING || common_state == COMMON_STATE_PLAY)
+            && !fs_a8s_is_online())
+        {
+            car_stop_reason |= CAR_STOP_REASON_OUT_CONTROL;
+        }
         car_go_command = 0U;
         car_state_stop_actuators();
         if(common_state != COMMON_STATE_PROTECT)
@@ -230,7 +254,6 @@ static void wireless_control_process_state(void)
         car_state_process_base_command();
     }
     else if((common_state != COMMON_STATE_PROTECT)
-        && (car_protection_active_reason == CAR_PROTECTION_REASON_NONE)
         && !car_race_finished_latched)
     {
         car_go_command = 0U;
@@ -240,6 +263,10 @@ static void wireless_control_process_state(void)
 
 static void car_state_enter_protect(uint8 reason)
 {
+    if((reason & CAR_PROTECTION_REASON_OUT_OF_BOUNDS) != 0U)
+    {
+        car_stop_reason |= CAR_STOP_REASON_OUT_OF_BOUNDS;
+    }
     car_protection_reason |= reason;
     car_state_apply(COMMON_STATE_PROTECT);
 }
@@ -258,6 +285,7 @@ static void servo_control_reset_pid(void)
 static void car_race_finish(void)
 {
     // 正常完赛不是故障：立即进入 IDLE 的零速闭环，并阻止无线运行挡在释放前重新发车。
+    car_stop_reason |= CAR_STOP_REASON_ZEBRA;
     car_race_finished_latched = true;
     car_go_command = 0U;
     car_zebra_straight_active = false;
@@ -336,9 +364,9 @@ void control_init(void)
     common_state = COMMON_STATE_IDLE;
     car_go_command = 0U;
     car_protection_reason = CAR_PROTECTION_REASON_NONE;
+    car_stop_reason = CAR_STOP_REASON_NONE;
     wireless_control_enabled = 0U;
     wireless_control_enabled_last = 0U;
-    car_protection_active_reason = CAR_PROTECTION_REASON_NONE;
     car_zebra_pass_count = 0U;
     car_zebra_straight_active = false;
     car_zebra_event_latched = false;
@@ -384,30 +412,6 @@ void car_state_command_task(void)
     }
 
     car_state_process_base_command();
-}
-
-void car_protection_check_attitude(void)
-{
-    // IDLE 下不做保护触发，也不保留上一次运行留下的实时故障状态。
-    if(common_state == COMMON_STATE_IDLE)
-    {
-        car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_ATTITUDE;
-        return;
-    }
-
-    if((control_absf(pitch) > CAR_PROTECTION_ANGLE_LIMIT_DEG)
-        || (control_absf(roll) > CAR_PROTECTION_ANGLE_LIMIT_DEG))
-    {
-        car_protection_active_reason |= CAR_PROTECTION_REASON_ATTITUDE;
-        if(common_state == COMMON_STATE_RUNNING || common_state == COMMON_STATE_PLAY)
-        {
-            car_state_enter_protect(CAR_PROTECTION_REASON_ATTITUDE);
-        }
-    }
-    else
-    {
-        car_protection_active_reason &= (uint8)~CAR_PROTECTION_REASON_ATTITUDE;
-    }
 }
 
 void car_protection_trigger_out_of_bounds(void)

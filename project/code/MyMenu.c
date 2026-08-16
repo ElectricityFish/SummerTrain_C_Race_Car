@@ -29,6 +29,7 @@ static Menu_Item *cargo_folder = NULL;
 static Menu_Item *base_control_folder = NULL;
 static Menu_Item *wireless_control_folder = NULL;
 static Menu_Item *check_folder = NULL;
+static Menu_Item *protect_folder = NULL;
 static Menu_Item *speed_debug_folder = NULL;
 static Menu_Item *speed_left_pid_folder = NULL;
 static Menu_Item *speed_right_pid_folder = NULL;
@@ -42,6 +43,10 @@ static uint8 cargo_state_menu_value = COMMON_STATE_IDLE;
 static uint8 cargo_fault_menu_value = CAR_PROTECTION_REASON_NONE;
 static uint8 image_send_status_menu_value = WIRELESS_IMAGE_SEND_NOT_SENT;
 static uint8 image_send_action_menu_value = 0;
+static uint8 protect_zebra_menu_value = 0U;
+static uint8 protect_out_menu_value = 0U;
+static uint8 protect_out_control_menu_value = 0U;
+static uint8 protect_ok_menu_value = 0U;
 static int16 check_encoder_left_menu_value = 0;
 static int16 check_encoder_right_menu_value = 0;
 static float check_yaw_menu_value = 0.0f;
@@ -134,6 +139,11 @@ static bool menu_is_base_control_page(void)
 static bool menu_is_image_send_page(void)
 {
 	return (key != NULL && key->father == image_send_folder);
+}
+
+static bool menu_is_protect_page(void)
+{
+	return (key != NULL && key->father == protect_folder);
 }
 
 static bool menu_is_wireless_control_page(void)
@@ -231,6 +241,38 @@ static bool menu_update_image_send_status(void)
 
 	image_send_status_menu_value = status_value;
 	return true;
+}
+
+static bool menu_update_protect_values(void)
+{
+	uint8 reason = car_stop_reason;
+	uint8 zebra_value = ((reason & CAR_STOP_REASON_ZEBRA) != 0U) ? 1U : 0U;
+	uint8 out_value = ((reason & CAR_STOP_REASON_OUT_OF_BOUNDS) != 0U) ? 1U : 0U;
+	uint8 out_control_value = ((reason & CAR_STOP_REASON_OUT_CONTROL) != 0U) ? 1U : 0U;
+	uint8 ok_value = ((reason & CAR_STOP_REASON_OK) != 0U) ? 1U : 0U;
+	bool changed = false;
+
+	if(protect_zebra_menu_value != zebra_value)
+	{
+		protect_zebra_menu_value = zebra_value;
+		changed = true;
+	}
+	if(protect_out_menu_value != out_value)
+	{
+		protect_out_menu_value = out_value;
+		changed = true;
+	}
+	if(protect_out_control_menu_value != out_control_value)
+	{
+		protect_out_control_menu_value = out_control_value;
+		changed = true;
+	}
+	if(protect_ok_menu_value != ok_value)
+	{
+		protect_ok_menu_value = ok_value;
+		changed = true;
+	}
+	return changed;
 }
 
 //把中断中更新的脉冲结果同步到菜单绑定变量，返回值表示本次是否有变化。
@@ -371,6 +413,21 @@ void menu_init(void)
 			item = create_menu_number_dynamic(wireless_control_folder, "CH6_SWC", (void *)&fs_a8s_channel_data.channel[5], uint16_Box);
 			if(item != NULL) item->editable = false;
 		}
+	}
+
+	// 最近一次停车原因；所有值只读，并在下一次从停车状态发车时统一清零。
+	protect_folder = create_menu_folder_dynamic(&head, "protect");
+	if(protect_folder != NULL)
+	{
+		menu_update_protect_values();
+		item = create_menu_number_dynamic(protect_folder, "ZEBAR", &protect_zebra_menu_value, uint8_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(protect_folder, "OUT", &protect_out_menu_value, uint8_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(protect_folder, "OutControl", &protect_out_control_menu_value, uint8_Box);
+		if(item != NULL) item->editable = false;
+		item = create_menu_number_dynamic(protect_folder, "OK", &protect_ok_menu_value, uint8_Box);
+		if(item != NULL) item->editable = false;
 	}
 
 	//图像目录包含采集帧率、处理结果预览和基础巡线参数。
@@ -924,6 +981,7 @@ void menu_show(void)
 	bool check_value_changed;
 	bool cargo_value_changed;
 	bool image_send_status_changed;
+	bool protect_values_changed;
 	bool fs_a8s_value_changed;
 	bool speed_value_changed;
 
@@ -941,6 +999,7 @@ void menu_show(void)
 	check_value_changed = menu_update_check_values();
 	cargo_value_changed = menu_update_cargo_values();
 	image_send_status_changed = menu_update_image_send_status();
+	protect_values_changed = menu_update_protect_values();
 	fs_a8s_value_changed = menu_update_fs_a8s_values();
 	speed_value_changed = menu_update_speed_values();
 
@@ -958,6 +1017,7 @@ void menu_show(void)
 		if((menu_is_check_page() && check_value_changed)
 			|| (menu_is_base_control_page() && cargo_value_changed)
 			|| (menu_is_image_send_page() && image_send_status_changed)
+			|| (menu_is_protect_page() && protect_values_changed)
 			|| (menu_is_wireless_control_page() && fs_a8s_value_changed)
 			|| (menu_is_speed_debug_page() && speed_value_changed))
 		{

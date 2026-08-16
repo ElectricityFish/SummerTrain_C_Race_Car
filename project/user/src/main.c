@@ -80,7 +80,9 @@ int main(void)
 		{
 			//仅在 IDLE 且菜单已请求时保存刚完成的一帧快照；处理完成后再发送原图或带赛道标记的图像。
 			wireless_image_capture_task((common_state == COMMON_STATE_IDLE), image_get_buffer(), MT9V03X_W, MT9V03X_H);
-			image_process_frame();
+			image_process_frame(
+				(common_state == COMMON_STATE_RUNNING)
+				|| (common_state == COMMON_STATE_PLAY));
 			car_race_process_zebra(image_process_is_zebra_detected());
 			if(image_process_is_out_of_bounds())
 			{
@@ -143,7 +145,6 @@ void TIM6_1ms_PIT(void)
 	if(count1>=10)									// 每10ms进行一次姿态解算
 	{
 		Get_Angle();								//KFILTER_SAMPLE_DT对应10ms
-		car_protection_check_attitude();
 		count1=0;
 	}
 	

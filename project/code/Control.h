@@ -14,15 +14,20 @@ typedef enum
 
 // 保护原因可以组合并锁存，供菜单显示和故障定位使用。
 #define CAR_PROTECTION_REASON_NONE       (0U)
-#define CAR_PROTECTION_REASON_ATTITUDE   (1U << 0)
 #define CAR_PROTECTION_REASON_OUT_OF_BOUNDS  (1U << 1)
 
-#define CAR_PROTECTION_ANGLE_LIMIT_DEG       (50.0f)
+// 每次发车清零、停车时锁存的原因位；允许多个同时发生的原因共同显示。
+#define CAR_STOP_REASON_NONE                  (0U)
+#define CAR_STOP_REASON_ZEBRA                 (1U << 0)
+#define CAR_STOP_REASON_OUT_OF_BOUNDS         (1U << 1)
+#define CAR_STOP_REASON_OUT_CONTROL           (1U << 3)
+#define CAR_STOP_REASON_OK                    (1U << 4)
 
 // common_state 由主循环和定时中断共同访问，必须使用 volatile。
 extern volatile Common_State common_state;
 extern volatile uint8 car_go_command;             // CarGo/RunCmd：0 停车，1 请求发车
 extern volatile uint8 car_protection_reason;      // 已锁存的保护原因位图
+extern volatile uint8 car_stop_reason;            // 最近一次停车原因位图，下一次发车时清零
 extern volatile uint8 wireless_control_enabled;   // Wireless_Control/Enable：0 关闭，1 开启
 
 
@@ -39,7 +44,7 @@ extern volatile bool servo_control_enabled;
 void control_init(void);
 
 // 在主循环调用，处理 Base_Control 或 Wireless_Control 的状态请求。
-// Protect 只能在没有实时故障且状态请求为 IDLE 时退回 IDLE。
+// Protect 在状态请求为 IDLE 时退回 IDLE。
 void car_state_command_task(void);
 
 // 无线总使能是否允许电机与舵机动作；供 1ms 执行器任务作最高优先级急停判断。
@@ -47,9 +52,6 @@ bool wireless_control_actuators_permitted(void);
 
 // PLAY 状态下按 CH1/CH3 刷新舵机和双电机输出；由 20ms 执行器任务调用。
 void wireless_control_play_task(void);
-
-// 在姿态解算完成后调用；RUNNING 与 PLAY 状态命中条件时进入 Protect。
-void car_protection_check_attitude(void);
 
 // 锁存一次出界故障并进入 Protect；IDLE/PROTECT 下调用不会改变状态。
 void car_protection_trigger_out_of_bounds(void);
