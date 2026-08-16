@@ -18,6 +18,7 @@ typedef struct
     uint8 weight_span;             // 加权区域半宽，单位：行
     uint8 weight_peak;             // 加权区域中心的最大权重
     uint8 mid_filter_current;      // 最终中线中当前帧占比，范围 0~100
+    uint8 curve_inner_bias;        // 单边弯道最终中线向弯内偏置，单位：像素
 } Image_Process_Config;
 
 // 十字状态：连续确认后会启用两拐点到底部两角的边线补线，并参与中线控制。

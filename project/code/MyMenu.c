@@ -454,6 +454,7 @@ void menu_init(void)
 		create_menu_number_range_dynamic(process_folder, "WeightSpan", &image_process_config.weight_span, uint8_Box, 1.0f, 80.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "WeightPeak", &image_process_config.weight_peak, uint8_Box, 1.0f, 50.0f, 1.0f);
 		create_menu_number_range_dynamic(process_folder, "Smooth", &image_process_config.mid_filter_current, uint8_Box, 0.0f, 100.0f, 1.0f);
+		create_menu_number_range_dynamic(process_folder, "CurveBias", &image_process_config.curve_inner_bias, uint8_Box, 0.0f, 10.0f, 1.0f);
 	}
 
 	//视觉转向动态 PID 参数。KpNow 是实时计算结果，仅用于观察。

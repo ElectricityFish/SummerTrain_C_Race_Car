@@ -25,6 +25,12 @@
 #define IMAGE_ZEBRA_FILTER_RADIUS             (2U)
 #define IMAGE_ZEBRA_HOLD_MISSED_FRAMES        (2U)
 
+// 仅在当前约40 cm前瞻附近持续出现同向单边线时，给最终转向中线增加小幅弯内偏置。
+#define IMAGE_CURVE_SINGLE_EDGE_ROW_TOP       (55U)
+#define IMAGE_CURVE_SINGLE_EDGE_ROW_BOTTOM    (80U)
+#define IMAGE_CURVE_SINGLE_EDGE_ROWS_MIN      (18U)
+#define IMAGE_CURVE_INNER_BIAS_MAX            (10U)
+
 // 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
 #define IMAGE_CROSS_ROI_TOP                 (12U)
 #define IMAGE_CROSS_ROI_BOTTOM              (75U)
@@ -967,12 +973,57 @@ static void image_process_apply_cross_repair(void)
     }
 }
 
+// 返回 1 表示只见左边线的右弯，-1 表示只见右边线的左弯，0 表示不启用弯内偏置。
+static int8 image_process_get_curve_inner_direction(void)
+{
+    uint8 left_only_rows = 0U;
+    uint8 right_only_rows = 0U;
+    uint16 row;
+
+    // 特殊元素保持各自原有控制逻辑，不让普通弯道偏置介入。
+    if(image_cross_state != IMAGE_CROSS_STATE_NONE || image_zebra_detected)
+    {
+        return 0;
+    }
+
+    for(row = IMAGE_CURVE_SINGLE_EDGE_ROW_TOP;
+        row <= IMAGE_CURVE_SINGLE_EDGE_ROW_BOTTOM && row < MT9V03X_H;
+        row++)
+    {
+        if(image_left_edge_valid[row] && !image_right_edge_valid[row])
+        {
+            left_only_rows++;
+        }
+        else if(!image_left_edge_valid[row] && image_right_edge_valid[row])
+        {
+            right_only_rows++;
+        }
+    }
+
+    if(left_only_rows >= IMAGE_CURVE_SINGLE_EDGE_ROWS_MIN
+        && left_only_rows > right_only_rows)
+    {
+        return 1;
+    }
+    if(right_only_rows >= IMAGE_CURVE_SINGLE_EDGE_ROWS_MIN
+        && right_only_rows > left_only_rows)
+    {
+        return -1;
+    }
+    return 0;
+}
+
 static void image_process_calculate_mid(void)
 {
     uint32 weighted_sum = 0U;
     uint16 weight_sum = 0U;
     uint16 row;
     uint8 current_weight = image_process_limit_u8(image_process_config.mid_filter_current, 0U, 100U);
+    uint8 curve_inner_bias = image_process_limit_u8(
+        image_process_config.curve_inner_bias,
+        0U,
+        IMAGE_CURVE_INNER_BIAS_MAX);
+    int8 curve_inner_direction;
     uint8 current_mid;
 
     for(row = 0U; row < MT9V03X_H; row++)
@@ -985,6 +1036,11 @@ static void image_process_calculate_mid(void)
     }
 
     current_mid = (uint8)(weighted_sum / weight_sum);
+    curve_inner_direction = image_process_get_curve_inner_direction();
+    current_mid = image_process_limit_u8(
+        (int32)current_mid + (int32)curve_inner_direction * curve_inner_bias,
+        0U,
+        MT9V03X_W - 1U);
     if(!image_has_last_mid)
     {
         image_final_mid = current_mid;
@@ -1012,6 +1068,7 @@ void image_process_init(void)
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
+    image_process_config.curve_inner_bias = 4U;
 
     memset(image_left_edge, 0, sizeof(image_left_edge));
     memset(image_right_edge, 0, sizeof(image_right_edge));
