@@ -1068,7 +1068,7 @@ void image_process_init(void)
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
-    image_process_config.curve_inner_bias = 4U;
+    image_process_config.curve_inner_bias = 10U;
 
     memset(image_left_edge, 0, sizeof(image_left_edge));
     memset(image_right_edge, 0, sizeof(image_right_edge));
