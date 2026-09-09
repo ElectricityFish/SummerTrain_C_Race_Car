@@ -29,7 +29,7 @@
 #define IMAGE_CURVE_SINGLE_EDGE_ROW_TOP       (55U)
 #define IMAGE_CURVE_SINGLE_EDGE_ROW_BOTTOM    (80U)
 #define IMAGE_CURVE_SINGLE_EDGE_ROWS_MIN      (18U)
-#define IMAGE_CURVE_INNER_BIAS_MAX            (10U)
+#define IMAGE_CURVE_INNER_BIAS_MAX            (20U)
 
 // 十字识别与补线参数。只有连续确认后，补线结果才会参与中线控制。
 #define IMAGE_CROSS_ROI_TOP                 (12U)
@@ -1068,7 +1068,7 @@ void image_process_init(void)
     image_process_config.weight_span = 35U;
     image_process_config.weight_peak = 20U;
     image_process_config.mid_filter_current = 80U;
-    image_process_config.curve_inner_bias = 10U;
+    image_process_config.curve_inner_bias = 20U;
 
     memset(image_left_edge, 0, sizeof(image_left_edge));
     memset(image_right_edge, 0, sizeof(image_right_edge));
